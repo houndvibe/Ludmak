@@ -8,14 +8,16 @@ import {
   ITEM_CELL_PX,
   PORTRAIT_H,
   PORTRAIT_W,
+  ICON_PX,
   TAG_ICON_PX,
   type AssetEntry,
 } from '../config/assets';
 import { ENEMIES } from '../data/enemies';
 import { ENEMY_ITEMS } from '../data/enemyItems';
 import { fits, rectMask, rotatedSize } from '../systems/backpack';
-import { ITEMS } from '../data/items';
-import { TAGS, UNTAGGED_COLOR } from '../data/tags';
+import { CATEGORY_COLORS, ITEMS } from '../data/items';
+import { CATEGORY_GLYPHS, drawGlyph, STAT_GLYPHS, TAG_GLYPHS, type GlyphId } from '../components/glyphs';
+import { TAGS } from '../data/tags';
 import { addText, FONT, H, W } from '../ui';
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
@@ -78,6 +80,7 @@ export class BootScene extends Phaser.Scene {
     else if (s.kind === 'enemyItem')
       [w, h] = [ENEMY_ITEMS[s.itemId].w * ITEM_CELL_PX, ENEMY_ITEMS[s.itemId].h * ITEM_CELL_PX];
     else if (s.kind === 'tag') [w, h] = [TAG_ICON_PX, TAG_ICON_PX];
+    else if (s.kind === 'statIcon' || s.kind === 'category') [w, h] = [ICON_PX, ICON_PX];
     else if (s.kind === 'home') [w, h] = [1920, 1080];
     else [w, h] = [s.w, s.h];
 
@@ -100,7 +103,7 @@ export class BootScene extends Phaser.Scene {
     } else if (s.kind === 'item') {
       const def = ITEMS[s.itemId];
       const main = def.tags.find((t) => TAGS[t].kind === 'tag');
-      const color = main ? TAGS[main].color : UNTAGGED_COLOR;
+      const color = main ? TAGS[main].color : CATEGORY_COLORS[def.category];
       ctx.fillStyle = hex(color);
       ctx.fillRect(0, 0, w, h);
       ctx.strokeStyle = 'rgba(0,0,0,0.6)';
@@ -126,14 +129,17 @@ export class BootScene extends Phaser.Scene {
     } else if (s.kind === 'home') {
       drawHomeStub(ctx, a.path);
     } else if (s.kind === 'tag') {
-      const t = TAGS[s.tagId];
-      ctx.fillStyle = hex(t.color);
+      drawBadge(ctx, w, TAGS[s.tagId].color, TAG_GLYPHS[s.tagId]);
+    } else if (s.kind === 'category') {
+      drawBadge(ctx, w, CATEGORY_COLORS[s.category], CATEGORY_GLYPHS[s.category]);
+    } else if (s.kind === 'statIcon') {
+      // Значок характеристики: цветной рисунок на тёмном круге.
+      const g = STAT_GLYPHS[s.iconId];
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
       ctx.beginPath();
-      ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2);
+      ctx.arc(w / 2, h / 2, w / 2 - 1, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.font = `bold ${Math.round(h * 0.55)}px ${FONT}`;
-      ctx.fillText(t.letter, w / 2, h / 2 + 2);
+      drawGlyph(ctx, g.glyph, w / 2, h / 2, w * 0.7, g.color);
     } else {
       ctx.fillStyle = s.color;
       ctx.fillRect(0, 0, w, h);
@@ -144,6 +150,18 @@ export class BootScene extends Phaser.Scene {
     }
     tex.refresh();
   }
+}
+
+/** Значок тега или категории: круг цвета типа с тёмной обводкой и светлый рисунок. */
+function drawBadge(ctx: CanvasRenderingContext2D, w: number, color: number, glyph: GlyphId): void {
+  ctx.fillStyle = hex(color);
+  ctx.beginPath();
+  ctx.arc(w / 2, w / 2, w / 2 - 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  drawGlyph(ctx, glyph, w / 2, w / 2, w * 0.56, '#f6f0e2');
 }
 
 /** Проверка раскладок сумок врагов из src/data/enemies.ts: предмет внутри сетки и не налезает на другие. */

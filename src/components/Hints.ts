@@ -2,6 +2,7 @@
 // Шаги и тексты — src/data/tutorial.ts (TUTORIAL_STEPS), строго по порядку; номер шага — run.tutorialStep.
 // Каждая сцена в create() вызывает tutorialAttach(scene, resolve): resolve(шаг) отвечает, где на экране нужный элемент
 // (прямоугольник), что шаг здесь не нужен ('skip') или что элемента пока нет (null — например, монстр ещё не подошёл).
+// У шага с перетаскиванием может быть второе окно drop — куда тащить: оно тоже не затемнено и обведено рамкой.
 // Когда нужное действие сделано — tutorialDone(scene, шаг). Если состояние сцены поменялось — tutorialRefresh(scene).
 import * as Phaser from 'phaser';
 import { FEEL } from '../config/feel';
@@ -10,7 +11,9 @@ import { run } from '../state';
 import { addText, Button, C, H, W } from '../ui';
 
 export type Rect = { x: number; y: number; w: number; h: number };
-export type StepTarget = Rect | 'skip' | null;
+/** Нужный элемент; drop — куда его перетащить (второе светлое окно). */
+export type TargetRect = Rect & { drop?: Rect };
+export type StepTarget = TargetRect | 'skip' | null;
 
 const F = FEEL.tutorial;
 
@@ -21,32 +24,43 @@ class Overlay {
   constructor(
     scene: Phaser.Scene,
     readonly step: StepDef,
-    target: Rect,
+    target: TargetRect,
     onOk: () => void,
   ) {
-    const hole = clampRect({ x: target.x - F.holePad, y: target.y - F.holePad, w: target.w + 2 * F.holePad, h: target.h + 2 * F.holePad });
+    const pad = (r: Rect) => clampRect({ x: r.x - F.holePad, y: r.y - F.holePad, w: r.w + 2 * F.holePad, h: r.h + 2 * F.holePad });
+    const hole = pad(target);
+    const holes = target.drop ? [hole, pad(target.drop)] : [hole];
     this.cont = scene.add.container(0, 0).setDepth(2000).setAlpha(0);
 
-    // Четыре тёмные полосы вокруг окна: они ловят клики и наведение, поэтому всё вне окна заблокировано.
-    const dark = (x: number, y: number, w: number, h: number) => {
-      if (w <= 0 || h <= 0) return;
-      const r = scene.add.rectangle(x, y, w, h, 0x000000, F.dimAlpha).setOrigin(0).setInteractive();
-      this.cont.add(r);
-    };
-    dark(0, 0, W, hole.y);
-    dark(0, hole.y + hole.h, W, H - hole.y - hole.h);
-    dark(0, hole.y, hole.x, hole.h);
-    dark(hole.x + hole.w, hole.y, W - hole.x - hole.w, hole.h);
+    // Тёмные прямоугольники вокруг окон: они ловят клики и наведение, поэтому всё вне окон заблокировано.
+    for (const r of darkRects(holes)) {
+      this.cont.add(scene.add.rectangle(r.x, r.y, r.w, r.h, 0x000000, F.dimAlpha).setOrigin(0).setInteractive());
+    }
     // Пояснение: окно тоже не нажимается — только «Понятно».
     if (!step.action) this.cont.add(scene.add.rectangle(hole.x, hole.y, hole.w, hole.h, 0xffffff, 0.001).setOrigin(0).setInteractive());
-    this.cont.add(scene.add.rectangle(hole.x, hole.y, hole.w, hole.h).setOrigin(0).setStrokeStyle(F.frameWidth, F.frameColor));
+    for (const h of holes) this.cont.add(scene.add.rectangle(h.x, h.y, h.w, h.h).setOrigin(0).setStrokeStyle(F.frameWidth, F.frameColor));
 
-    // Попап с текстом (у пояснений — кнопка «Понятно»).
-    const pw = F.popupW;
-    const text = addText(scene, 0, 0, step.text, F.fontSize, C.text, { wordWrap: { width: pw - 2 * F.popupPad }, lineSpacing: 4 });
+    // Попап с текстом (у пояснений — кнопка «Понятно»). Нет места на обычной ширине — попап уже (текст в больше строк).
+    const text = addText(scene, 0, 0, step.text, F.fontSize, C.text, { lineSpacing: 4 });
     const btnH = step.action ? 0 : 60;
-    const ph = F.popupPad * 2 + text.height + (btnH ? btnH + F.popupPad : 0);
-    const place = placePopup(hole, pw, ph);
+    let pw = F.popupW;
+    let ph = 0;
+    let place: ReturnType<typeof placePopup> = null;
+    for (const w of [F.popupW, ...F.popupNarrowW]) {
+      pw = w;
+      text.setWordWrapWidth(pw - 2 * F.popupPad);
+      ph = F.popupPad * 2 + text.height + (btnH ? btnH + F.popupPad : 0);
+      place = placePopup(hole, pw, ph, holes.slice(1));
+      if (place) break;
+    }
+    if (!place) {
+      // Нигде не влез — по центру экрана, без стрелки.
+      pw = F.popupW;
+      text.setWordWrapWidth(pw - 2 * F.popupPad);
+      ph = F.popupPad * 2 + text.height + (btnH ? btnH + F.popupPad : 0);
+      const p = { x: (W - pw) / 2, y: (H - ph) / 2 };
+      place = { ...p, side: null, tail: p, tip: p };
+    }
     const popup = scene.add.container(place.x, place.y);
     popup.add(scene.add.rectangle(0, 0, pw, ph, 0x15121b, 0.97).setOrigin(0).setStrokeStyle(3, F.frameColor));
     text.setPosition(F.popupPad, F.popupPad);
@@ -78,13 +92,34 @@ function clampRect(r: Rect): Rect {
   return { x, y, w: Math.min(W, r.x + r.w) - x, h: Math.min(H, r.y + r.h) - y };
 }
 
+/** Экран минус окна — набор тёмных прямоугольников (полосы по вертикальным столбцам между краями окон). */
+function darkRects(holes: Rect[]): Rect[] {
+  const xs = [...new Set([0, W, ...holes.flatMap((h) => [h.x, h.x + h.w])])].sort((a, b) => a - b);
+  const out: Rect[] = [];
+  for (let i = 0; i < xs.length - 1; i++) {
+    const x0 = xs[i];
+    const x1 = xs[i + 1];
+    if (x1 <= x0) continue;
+    const cover = holes.filter((h) => h.x <= x0 && h.x + h.w >= x1).sort((a, b) => a.y - b.y);
+    let y = 0;
+    for (const h of cover) {
+      if (h.y > y) out.push({ x: x0, y, w: x1 - x0, h: h.y - y });
+      y = Math.max(y, h.y + h.h);
+    }
+    if (y < H) out.push({ x: x0, y, w: x1 - x0, h: H - y });
+  }
+  return out;
+}
+
+const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
 type Point = { x: number; y: number };
 
 /**
- * Где поставить попап: под элементом, над ним, справа или слева — где влезает. Не влезает нигде — по центру без стрелки.
- * tail — начало стрелки у попапа, tip — остриё у элемента.
+ * Где поставить попап: под элементом, над ним, справа или слева — где влезает и не закрывает окна avoid.
+ * Не влезает нигде — null. tail — начало стрелки у попапа, tip — остриё у элемента.
  */
-function placePopup(hole: Rect, pw: number, ph: number): { x: number; y: number; side: string | null; tail: Point; tip: Point } {
+function placePopup(hole: Rect, pw: number, ph: number, avoid: Rect[] = []): { x: number; y: number; side: string | null; tail: Point; tip: Point } | null {
   const m = 10;
   const cx = hole.x + hole.w / 2;
   const cy = hole.y + hole.h / 2;
@@ -96,32 +131,32 @@ function placePopup(hole: Rect, pw: number, ph: number): { x: number; y: number;
     const hi = Math.min(a1, b1) - 20;
     return lo <= hi ? Phaser.Math.Clamp(c, lo, hi) : c;
   };
+  const free = (x: number, y: number) => !avoid.some((a) => overlaps(a, { x, y, w: pw, h: ph }));
   if (hole.y + hole.h + F.gap + ph <= H - m) {
     const x = clampX(cx - pw / 2);
     const y = hole.y + hole.h + F.gap;
     const ax = shared(x, x + pw, hole.x, hole.x + hole.w, cx);
-    return { x, y, side: 'below', tail: { x: ax, y: y - 8 }, tip: { x: ax, y: hole.y + hole.h + 8 } };
+    if (free(x, y)) return { x, y, side: 'below', tail: { x: ax, y: y - 8 }, tip: { x: ax, y: hole.y + hole.h + 8 } };
   }
   if (hole.y - F.gap - ph >= m) {
     const x = clampX(cx - pw / 2);
     const y = hole.y - F.gap - ph;
     const ax = shared(x, x + pw, hole.x, hole.x + hole.w, cx);
-    return { x, y, side: 'above', tail: { x: ax, y: y + ph + 8 }, tip: { x: ax, y: hole.y - 8 } };
+    if (free(x, y)) return { x, y, side: 'above', tail: { x: ax, y: y + ph + 8 }, tip: { x: ax, y: hole.y - 8 } };
   }
   if (hole.x + hole.w + F.gap + pw <= W - m) {
     const x = hole.x + hole.w + F.gap;
     const y = clampY(cy - ph / 2);
     const ay = shared(y, y + ph, hole.y, hole.y + hole.h, cy);
-    return { x, y, side: 'right', tail: { x: x - 8, y: ay }, tip: { x: hole.x + hole.w + 8, y: ay } };
+    if (free(x, y)) return { x, y, side: 'right', tail: { x: x - 8, y: ay }, tip: { x: hole.x + hole.w + 8, y: ay } };
   }
   if (hole.x - F.gap - pw >= m) {
     const x = hole.x - F.gap - pw;
     const y = clampY(cy - ph / 2);
     const ay = shared(y, y + ph, hole.y, hole.y + hole.h, cy);
-    return { x, y, side: 'left', tail: { x: x + pw + 8, y: ay }, tip: { x: hole.x - 8, y: ay } };
+    if (free(x, y)) return { x, y, side: 'left', tail: { x: x + pw + 8, y: ay }, tip: { x: hole.x - 8, y: ay } };
   }
-  const p = { x: (W - pw) / 2, y: (H - ph) / 2 };
-  return { ...p, side: null, tail: p, tip: p };
+  return null;
 }
 
 /** Толстая стрелка от tail к tip с наконечником. */

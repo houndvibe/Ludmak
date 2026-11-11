@@ -2,7 +2,7 @@
 // Соседство: метки при перетаскивании, серые отключённые предметы, панель «Сила снаряжения».
 // Слияние: предмет, отпущенный на такой же предмет того же уровня, становится ★2 / ★3.
 import * as Phaser from 'phaser';
-import { BACKPACK_LAYOUT, BG_NIGHT_KEY, HORSE_ART, itemKey } from '../config/assets';
+import { BACKPACK_LAYOUT, BG_BACKPACK_KEY, HORSE_ART, itemKey } from '../config/assets';
 import { GridView, type GridLabel, type GridLabels } from '../components/GridView';
 import { ITEMS } from '../data/items';
 import { canPlace, MASK, type OwnedItem } from '../systems/backpack';
@@ -10,7 +10,7 @@ import { computePower, gearSummary, starOf, type PowerResult } from '../systems/
 import { tutorialAttach, tutorialDone } from '../components/Hints';
 import { playMusic, sfx } from '../components/Sound';
 import { canMerge, mergeItems, run } from '../state';
-import { addBackground, addHeader, addHorse, addText, Button, C, describeOwnedItem, fadeIn, goto, itemRarityFrame, itemTagColor } from '../ui';
+import { addBackground, addHeader, addHorse, addText, Button, C, describeOwnedItem, fadeIn, goto, itemRarityFrame } from '../ui';
 
 /** Галочка «Скрыть эффекты соседства» — запоминается в браузере. */
 const HIDE_LABELS_KEY = 'ludmak.hideSynergyLabels';
@@ -49,7 +49,7 @@ export class BackpackScene extends Phaser.Scene {
     const gridW = MASK.cols * L.cell;
     const gridH = MASK.rows * L.cell;
 
-    addBackground(this, BG_NIGHT_KEY);
+    addBackground(this, BG_BACKPACK_KEY);
     addHorse(this, L.grid.x, L.grid.y, L.cell);
     addHeader(this, 'Укладка рюкзака');
     addText(
@@ -63,13 +63,16 @@ export class BackpackScene extends Phaser.Scene {
     this.countText = addText(this, L.grid.x, 200, '', 26, C.accent);
     this.addHideLabelsCheckbox();
 
+    // «Вне сумок» — внутренность сундука на фоне; подпись и страницы — на крышке.
     const s = L.stash;
-    this.add.rectangle(s.x, s.y, s.w, s.h, C.panel, 0.85).setOrigin(0).setStrokeStyle(2, C.border);
-    addText(this, s.x, s.y - 40, 'Вне сумок — в бою не участвуют', 26, C.dim);
+    addText(this, L.stashTitle.x, L.stashTitle.y, 'Вне сумок — в бою не участвуют', 24, C.text, {
+      stroke: '#000000',
+      strokeThickness: 4,
+    }).setOrigin(0.5);
 
     // Страницы «вне сумок»: стрелки видны, только когда вещей больше, чем влезает.
     const nav = L.stashNav;
-    const pageText = addText(this, nav.pageX, nav.y, '', 22, C.dim).setOrigin(1, 0.5);
+    const pageText = addText(this, nav.pageX, nav.y, '', 22, C.text, { stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5);
     const prev = new Button(this, nav.prevX, nav.y, nav.w, nav.h, '◀', () => this.view.turnStashPage(-1), 24);
     const next = new Button(this, nav.nextX, nav.y, nav.w, nav.h, '▶', () => this.view.turnStashPage(1), 24);
     const showPages = (page: number, count: number) => {
@@ -79,12 +82,16 @@ export class BackpackScene extends Phaser.Scene {
       next.setVisible(many).setEnabled(page < count - 1);
     };
 
+    // Пергамент: «Сила снаряжения»; при наведении на предмет вместо неё — описание предмета. Чернила тёмные.
     const pw = L.power;
-    this.add.rectangle(pw.x, pw.y, pw.w, pw.h, C.panel, 0.92).setOrigin(0).setStrokeStyle(2, C.border);
-    addText(this, pw.x + 20, pw.y + 14, 'Сила снаряжения', 28, C.accent, { fontStyle: 'bold' });
-    this.powerText = addText(this, pw.x + 20, pw.y + 56, '', 22, C.text, { lineSpacing: 6, wordWrap: { width: pw.w - 40 } });
-
-    const info = addText(this, L.info.x, L.info.y, '', 22, C.text, { lineSpacing: 4, wordWrap: { width: L.info.w } });
+    const powerTitle = addText(this, pw.x + 16, pw.y + 10, 'Сила снаряжения', 28, C.inkAccent, { fontStyle: 'bold' });
+    this.powerText = addText(this, pw.x + 16, pw.y + 52, '', 21, C.ink, { lineSpacing: 5, wordWrap: { width: pw.w - 32 } });
+    const info = addText(this, pw.x + 16, pw.y + 10, '', 20, C.ink, { lineSpacing: 3, wordWrap: { width: pw.w - 32 } }).setVisible(false);
+    const showInfo = (t: string | null) => {
+      info.setText(t ?? '').setVisible(!!t);
+      powerTitle.setVisible(!t);
+      this.powerText.setVisible(!t);
+    };
     this.power = computePower(run.items);
     this.view = new GridView<OwnedItem>(this, {
       x: L.grid.x,
@@ -102,11 +109,10 @@ export class BackpackScene extends Phaser.Scene {
         h: ITEMS[it.id].h,
         key: itemKey(it.id),
         star: starOf(it),
-        tint: itemTagColor(it.id),
         frame: itemRarityFrame(it.id),
       }),
       describe: (it) => describeOwnedItem(it, this.power.powers, run.items),
-      onHover: (t) => info.setText(t ?? ''),
+      onHover: (t) => showInfo(t),
       stash: s,
       canPlace: (it, rotated, col, row) => canPlace(run.items, it.id, rotated, col, row, it.uid),
       preview: (it, col, row, rotated) => this.previewLabels(it, col, row, rotated),
@@ -120,7 +126,7 @@ export class BackpackScene extends Phaser.Scene {
     }).setDepth(10);
     this.refresh();
 
-    const home = { x: 1520, y: 1010, w: 420, h: 70 };
+    const home = L.home;
     new Button(this, home.x, home.y, home.w, home.h, '← Домой', () => {
       tutorialDone(this, 'bagsHome');
       goto(this, 'Home');

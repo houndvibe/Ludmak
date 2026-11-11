@@ -4,6 +4,7 @@ import {
   BOSS_ESCORT,
   CLIENT_PENALTY_MULT,
   CLIENT_REWARD_MULT,
+  CONTRACT_SIZE_MULT,
   ENEMY_COUNT_BY_NIGHT,
   ENEMY_POOL_BY_NIGHT,
   ENEMY_STATS,
@@ -53,7 +54,8 @@ export function rollEnemies(night: number, rng: Rng, count?: number): EnemyId[] 
  */
 function makeContract(night: number, client: ClientId, enemies: EnemyId[], rng: Rng): Contract {
   const bounty = enemies.reduce((sum, e) => sum + ENEMY_STATS[e].bounty, 0);
-  const base = bounty * REWARD_MULT_BY_NIGHT[night - 1] * (1 + randReal(rng, -REWARD_SPREAD, REWARD_SPREAD));
+  const size = CONTRACT_SIZE_MULT[enemies.length] ?? 1; // большой заказ выгоднее за голову
+  const base = bounty * size * REWARD_MULT_BY_NIGHT[night - 1] * (1 + randReal(rng, -REWARD_SPREAD, REWARD_SPREAD));
   const reward = Math.round(base * (CLIENT_REWARD_MULT[client] ?? 1));
   const penalty = Math.round(base * PENALTY_RATIO * (CLIENT_PENALTY_MULT[client] ?? 1));
   const mods = enemies.map((e) => rollModifier(night, e, rng));

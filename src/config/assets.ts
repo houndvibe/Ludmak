@@ -4,7 +4,7 @@
 import { CLIENT_IDS, CLIENTS, type ClientId } from "../data/clients";
 import { ENEMIES, ENEMY_IDS, type EnemyId } from "../data/enemies";
 import { ENEMY_ITEM_IDS, type EnemyItemId } from "../data/enemyItems";
-import { ITEM_IDS, type ItemId } from "../data/items";
+import { CATEGORY_IDS, ITEM_IDS, type ItemCategory, type ItemId } from "../data/items";
 import { TAG_IDS, type TagId } from "../data/tags";
 
 /** Размер портрета, под который рисует художница (и размер заглушки). */
@@ -14,12 +14,20 @@ export const PORTRAIT_H = 640;
 export const ITEM_CELL_PX = 128;
 /** Размер значка тега. */
 export const TAG_ICON_PX = 64;
+/** Размер значков характеристик и категорий предметов (карточка магазина). */
+export const ICON_PX = 64;
+
+/** Значки характеристик на карточке: урон, лечение, блок, оглушение, перезарядка, заряды, усиление оружия, длительность, урон себе, аура. */
+export type StatIconId = "damage" | "heal" | "block" | "stun" | "cooldown" | "charges" | "buff" | "duration" | "self" | "aura";
+export const STAT_ICON_IDS: StatIconId[] = ["damage", "heal", "block", "stun", "cooldown", "charges", "buff", "duration", "self", "aura"];
 
 export type StubSpec =
   | { kind: "portrait"; label: string }
   | { kind: "item"; itemId: ItemId }
   | { kind: "enemyItem"; itemId: EnemyItemId }
   | { kind: "tag"; tagId: TagId }
+  | { kind: "statIcon"; iconId: StatIconId }
+  | { kind: "category"; category: ItemCategory }
   | { kind: "home" }
   | { kind: "background"; label: string; w: number; h: number; color: string };
 
@@ -41,29 +49,32 @@ export const clientKey = (id: ClientId) => `portrait_client_${id}`;
 export const itemKey = (id: ItemId) => `item_${id}`;
 export const enemyItemKey = (id: EnemyItemId) => `enemy_item_${id}`;
 export const tagKey = (id: TagId) => `tag_${id}`;
+export const statIconKey = (id: StatIconId) => `icon_stat_${id}`;
+export const categoryKey = (id: ItemCategory) => `icon_category_${id}`;
 
 /**
- * Раскладка экрана дома в координатах 1920×1080 — под рисунок backgrounds/home.png.
+ * Раскладка экрана дома в координатах 1920×1080 — под рисунок backgrounds/home.webp (1717×916, растягивается по высоте
+ * на 1080 и обрезается по бокам на ~52 px: X = x·1,179 − 52, Y = y·1,179 в пикселях картинки).
  * Если художница нарисовала дверь/сундук/сумки в другом месте — поправьте числа здесь, код трогать не нужно.
  * Прямоугольники: x, y — левый верхний угол.
  */
 export const HOME_LAYOUT = {
   /** Дверь целиком (зона клика «На охоту / Переждать день»). */
-  door: { x: 760, y: 150, w: 400, h: 880 },
+  door: { x: 753, y: 198, w: 368, h: 775 },
   /** Окошко-задвижка в двери. Портрет монстра обрезается этой фигурой (скруглённый прямоугольник). */
-  window: { x: 840, y: 230, w: 240, h: 260, radius: 40 },
+  window: { x: 867, y: 295, w: 214, h: 238, radius: 26 },
   /** Сдвиг портрета внутри окошка по вертикали (px): больше — портрет ниже, видно больше макушки. */
   portraitOffsetY: 0,
   /** Ширина портрета в окошке (px); высота — по пропорциям портрета 512×640. */
-  portraitWidth: 300,
+  portraitWidth: 268,
   /** Карточка заказа рядом с окошком. */
-  card: { x: 1195, y: 170, w: 450, h: 560 },
+  card: { x: 1190, y: 240, w: 455, h: 560 },
   /** Прилавок/сундук — кнопка «Магазин». */
-  shop: { x: 110, y: 690, w: 440, h: 290 },
+  shop: { x: 89, y: 637, w: 596, h: 389 },
   /** Седельные сумки на крюке — кнопка «Сумки». */
-  bags: { x: 1680, y: 330, w: 210, h: 470 },
-  /** Доска «Заказы на сегодня». */
-  board: { x: 70, y: 110, w: 540, h: 545 },
+  bags: { x: 1705, y: 295, w: 167, h: 497 },
+  /** Доска «Заказы на сегодня» — тёмная внутренняя часть доски на фоне (без рамки). */
+  board: { x: 118, y: 200, w: 495, h: 404 },
 };
 
 /** Верхняя панель (addHeader): кнопка «Без звука» — центр и размер. */
@@ -121,17 +132,28 @@ export const BACKPACK_LAYOUT = {
   cell: 110,
   /** Левый верхний угол сетки. */
   grid: { x: 150, y: 260 },
-  /** Зона «вне сумок» и размер клетки в ней. Не влезло — вещи листаются страницами. */
-  stash: { x: 1140, y: 260, w: 720, h: 400, cell: 64 },
-  /** Стрелки страниц «вне сумок» и номер страницы — над правым краем зоны. */
-  stashNav: { prevX: 1720, nextX: 1820, pageX: 1660, y: 220, w: 70, h: 40 },
+  /**
+   * Зона «вне сумок» — внутренность сундука на фоне backgrounds/backpack_room.webp — и размер клетки в ней.
+   * Не влезло — вещи листаются страницами.
+   */
+  stash: { x: 1257, y: 677, w: 529, h: 152, cell: 64 },
+  /** Подпись «Вне сумок…» — по центру внутренней доски крышки сундука. */
+  stashTitle: { x: 1521, y: 545 },
+  /** Стрелки страниц «вне сумок» и номер страницы (по центру) — на крышке сундука под подписью. */
+  stashNav: { prevX: 1330, nextX: 1712, pageX: 1521, y: 600, w: 70, h: 40 },
   /** Галочка «Скрыть эффекты соседства»: центр квадратика (подпись — справа от него) и размер квадратика. */
   hideLabels: { x: 620, y: 216, size: 28 },
-  /** Панель «Сила снаряжения». */
-  power: { x: 1140, y: 690, w: 720, h: 270 },
-  /** Подсказка при наведении на предмет (левый верхний угол и ширина). */
-  info: { x: 150, y: 830, w: 960 },
+  /**
+   * Пергамент: «Сила снаряжения», а при наведении на предмет — его описание. Текст тёмный (чернила).
+   * Прямоугольник — чистая область пергамента на фоне.
+   */
+  power: { x: 1234, y: 183, w: 546, h: 270 },
+  /** Кнопка «← Домой»: центр и размер — на полу под сундуком. */
+  home: { x: 1521, y: 1042, w: 400, h: 56 },
 };
+
+/** Фон экрана рюкзака: стойло слева (под лошадь), пергамент и сундук справа. Зоны — в BACKPACK_LAYOUT. */
+export const BG_BACKPACK_KEY = "bg_backpack";
 
 /**
  * Раскладка экрана боя. Рюкзак героя (маска 8×5) и самая большая сумка врага должны помещаться без наложений:
@@ -202,7 +224,17 @@ export const ASSET_MANIFEST: AssetEntry[] = [
     path: `tags/${id}.png`,
     stub: { kind: "tag", tagId: id } as StubSpec,
   })),
-  { key: BG_HOME_KEY, path: "backgrounds/home.png", stub: { kind: "home" } },
+  ...STAT_ICON_IDS.map((id) => ({
+    key: statIconKey(id),
+    path: `icons/stats/${id}.png`,
+    stub: { kind: "statIcon", iconId: id } as StubSpec,
+  })),
+  ...CATEGORY_IDS.map((id) => ({
+    key: categoryKey(id),
+    path: `icons/categories/${id}.png`,
+    stub: { kind: "category", category: id } as StubSpec,
+  })),
+  { key: BG_HOME_KEY, path: "backgrounds/home.webp", stub: { kind: "home" } },
   {
     key: BG_NIGHT_KEY,
     path: "backgrounds/bg_night.png",
@@ -224,6 +256,11 @@ export const ASSET_MANIFEST: AssetEntry[] = [
       h: 1080,
       color: "#1c1614",
     },
+  },
+  {
+    key: BG_BACKPACK_KEY,
+    path: "backgrounds/backpack_room.webp",
+    stub: { kind: "background", label: "backpack_room", w: 1920, h: 1080, color: "#1e1813" },
   },
   {
     key: BG_HORSE_KEY,

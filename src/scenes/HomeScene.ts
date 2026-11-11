@@ -259,7 +259,7 @@ export class HomeScene extends Phaser.Scene {
   private refreshBoard(): void {
     const r = HOME_LAYOUT.board;
     this.board.removeAll(true);
-    this.board.add(this.add.rectangle(r.x, r.y, r.w, r.h, 0x000000, 0.45).setOrigin(0).setStrokeStyle(2, C.border));
+    this.board.add(this.add.rectangle(r.x, r.y, r.w, r.h, 0x000000, 0.25).setOrigin(0)); // доска нарисована на фоне — без рамки
     this.board.add(addText(this, r.x + 20, r.y + 14, 'Заказы на сегодня', 28, C.accent, { fontStyle: 'bold' }));
     this.board.add(
       addText(this, r.x + r.w - 20, r.y + 16, `Заказы: ${run.accepted.length}/${heroLevel()}`, 26, C.text, { fontStyle: 'bold' }).setOrigin(1, 0),

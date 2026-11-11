@@ -2,9 +2,9 @@
 // Вход — предметы героя (учитываются только лежащие в сетке). Выход — итоговые характеристики каждого
 // предмета и список применённых эффектов с источниками.
 import { ITEM_STATS, STAR_MULT, type ItemStats } from '../config/balance';
-import { ITEMS, type ItemId } from '../data/items';
+import { CATEGORY_NAMES, ITEMS, type ItemId } from '../data/items';
 import { SYNERGIES, type Selector, type SynergyRule } from '../data/synergies';
-import { TAGS } from '../data/tags';
+import { TAGS, type TagId } from '../data/tags';
 import { cellsOf, footprint, type OwnedItem } from './backpack';
 
 /** Характеристики, которые растут от 'all' (и от уровня — кроме оглушения и длительности). */
@@ -246,10 +246,26 @@ export function gearSummary(allItems: OwnedItem[], result: PowerResult): GearSum
   return sum;
 }
 
+/** Название цели правила для подсказки: тег, категория или предмет — по-русски. */
+function targetName(sel: Selector): string {
+  if (sel.tag) return TAGS[sel.tag].name;
+  if (sel.category) return CATEGORY_NAMES[sel.category];
+  return sel.item ? ITEMS[sel.item].name : '';
+}
+
+/** Аура предмета-источника: на какой тег действует (или название цели), насколько (доля) и к чему — урону или эффекту. */
+export function auraInfo(id: ItemId): { tag: TagId | null; target: string; amount: number; damage: boolean } | null {
+  const rule = SYNERGIES.find((r) => r.source.item === id && r.effect.kind === 'boost');
+  if (!rule || rule.effect.kind !== 'boost') return null;
+  const tag = rule.target.tag ?? null;
+  const target = targetName(rule.target);
+  return { tag, target, amount: rule.effect.amount, damage: rule.effect.stat === 'damage' };
+}
+
 /** Описание ауры предмета-источника для подсказки: «соседнее Серебро +40% к эффекту». */
 export function auraText(id: ItemId): string | null {
   const rule = SYNERGIES.find((r) => r.source.item === id && r.effect.kind === 'boost');
   if (!rule || rule.effect.kind !== 'boost') return null;
-  const target = rule.target.tag ? TAGS[rule.target.tag].name : rule.target.category ?? rule.target.item ?? '';
+  const target = targetName(rule.target);
   return `аура: соседнее ${target} ${pct(rule.effect.amount)} к ${rule.effect.stat === 'damage' ? 'урону' : 'эффекту'}`;
 }

@@ -300,7 +300,7 @@ function addItem(id: ItemId): void {
   });
 }
 
-/** Тратит заряд активного предмета. Последний заряд — предмет исчезает навсегда. Возвращает остаток. */
+/** Тратит заряд предмета (активного или хлеба). Последний заряд — предмет исчезает навсегда. Возвращает остаток. */
 export function spendCharge(uid: number): number {
   const item = run.items.find((i) => i.uid === uid);
   if (!item || !item.charges) return 0;

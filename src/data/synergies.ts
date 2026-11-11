@@ -40,8 +40,8 @@ export interface SynergyRule {
 }
 
 export const SYNERGIES: SynergyRule[] = [
-  { id: 'fire_alchemy', title: 'Огонь к Алхимии', source: { tag: 'fire' }, target: { tag: 'alchemy' }, effect: { kind: 'boost', stat: 'all', amount: SYNERGY.fireAlchemy } },
-  { id: 'fire_food', title: 'Огонь сжигает Еду', source: { tag: 'fire' }, target: { tag: 'food' }, effect: { kind: 'disable', label: 'Сгорит' } },
+  { id: 'fire_alchemy', title: 'Огонь к Алхимии', source: { tag: 'fire' }, target: { category: 'alchemy' }, effect: { kind: 'boost', stat: 'all', amount: SYNERGY.fireAlchemy } },
+  { id: 'fire_food', title: 'Огонь сжигает Еду', source: { tag: 'fire' }, target: { category: 'food' }, effect: { kind: 'disable', label: 'Сгорит' } },
   {
     id: 'fire_noisy', title: 'Огонь у шумного',
     source: { tag: 'fire' },
@@ -51,15 +51,21 @@ export const SYNERGIES: SynergyRule[] = [
   { id: 'silver_silver', title: 'Серебро к Серебру', source: { tag: 'silver' }, target: { tag: 'silver' }, effect: { kind: 'boost', stat: 'all', amount: SYNERGY.silverSilver } },
   { id: 'silver_curse', title: 'Серебро против Проклятия', source: { tag: 'silver' }, target: { tag: 'curse' }, effect: { kind: 'boost', stat: 'damage', amount: SYNERGY.silverVsCurse } },
   { id: 'curse_silver', title: 'Проклятие против Серебра', source: { tag: 'curse' }, target: { tag: 'silver' }, effect: { kind: 'boost', stat: 'damage', amount: SYNERGY.curseVsSilver } },
-  { id: 'alchemy_weapon', title: 'Алхимия к оружию', source: { tag: 'alchemy' }, target: { category: 'weapon' }, effect: { kind: 'boost', stat: 'damage', amount: SYNERGY.alchemyWeapon } },
-  { id: 'alchemy_food', title: 'Алхимия травит Еду', source: { tag: 'alchemy' }, target: { tag: 'food' }, effect: { kind: 'poison' } },
-  { id: 'food_amulet', title: 'Еда к амулету', source: { tag: 'food' }, target: { category: 'amulet' }, effect: { kind: 'auraBoost', amount: SYNERGY.foodAmulet } },
+  { id: 'alchemy_weapon', title: 'Алхимия к оружию', source: { category: 'alchemy' }, target: { category: 'weapon' }, effect: { kind: 'boost', stat: 'damage', amount: SYNERGY.alchemyWeapon } },
+  { id: 'alchemy_food', title: 'Алхимия травит Еду', source: { category: 'alchemy' }, target: { category: 'food' }, effect: { kind: 'poison' } },
+  { id: 'food_amulet', title: 'Еда к амулету', source: { category: 'food' }, target: { category: 'amulet' }, effect: { kind: 'auraBoost', amount: SYNERGY.foodAmulet } },
   // Личные ауры амулетов.
   {
     id: 'horseshoe_aura', title: 'аура подковы',
     source: { item: 'silver_horseshoe' },
     target: { tag: 'silver' },
     effect: { kind: 'boost', stat: 'all', amount: SYNERGY.horseshoeAura, aura: true },
+  },
+  {
+    id: 'whetstone_aura', title: 'аура точильного камня',
+    source: { item: 'whetstone' },
+    target: { category: 'weapon' },
+    effect: { kind: 'boost', stat: 'damage', amount: SYNERGY.whetstoneAura, aura: true },
   },
   {
     id: 'bone_aura', title: 'аура ладанки',

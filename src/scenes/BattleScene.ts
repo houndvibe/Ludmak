@@ -4,7 +4,7 @@
 import * as Phaser from 'phaser';
 import { GridView } from '../components/GridView';
 import { BATTLE_LAYOUT, BG_BATTLE_KEY, enemyItemKey, enemyKey, HERO_KEY, HORSE_ART, itemKey } from '../config/assets';
-import { BATTLE_FAST_SPEED, HERO_MAX_HP } from '../config/balance';
+import { BATTLE_FAST_SPEED } from '../config/balance';
 import { CLIENTS } from '../data/clients';
 import { ENEMIES } from '../data/enemies';
 import { FEEL } from '../config/feel';
@@ -31,7 +31,6 @@ import {
   goto,
   W,
   itemRarityFrame,
-  itemTagColor,
 } from '../ui';
 
 const L = BATTLE_LAYOUT;
@@ -143,7 +142,6 @@ export class BattleScene extends Phaser.Scene {
         h: ITEMS[it.id].h,
         key: itemKey(it.id),
         star: starOf(it),
-        tint: itemTagColor(it.id),
         frame: itemRarityFrame(it.id),
       }),
       describe: (it) => describeOwnedItem(it, this.sim.powers, this.sim.items),
@@ -154,7 +152,7 @@ export class BattleScene extends Phaser.Scene {
         this.afterSimChange();
       },
     });
-    for (const a of this.sim.actives) this.heroView.setCharges(a.item.uid, a.charges);
+    for (const s of this.sim.slots) if (Number.isFinite(s.charges)) this.heroView.setCharges(s.item.uid, s.charges);
 
     this.showEnemy();
     this.afterSimChange(); // события начала боя: сгорело, отравлено, взрыв
@@ -309,7 +307,7 @@ export class BattleScene extends Phaser.Scene {
         this.heroView.flash(e.uid);
         if (e.active) this.floatText(L.centerX, L.itemNameY, e.name, C.accent, 30);
         const id = this.itemIds.get(e.uid);
-        if (e.active && id && ITEMS[id].category === 'bomb') {
+        if (e.active && id && ITEMS[id].tags.includes('bomb')) {
           sfx(this, 'bomb');
           this.shake(FEEL.shake.explosionIntensity, FEEL.shake.explosionMs);
         }
@@ -483,8 +481,8 @@ export class BattleScene extends Phaser.Scene {
 
   private refresh(): void {
     const sim = this.sim;
-    this.heroBar.width = (BAR_W * sim.heroHp) / HERO_MAX_HP;
-    this.heroHpText.setText(`${sim.heroHp} / ${HERO_MAX_HP}`);
+    this.heroBar.width = (BAR_W * sim.heroHp) / sim.heroMaxHp;
+    this.heroHpText.setText(`${sim.heroHp} / ${sim.heroMaxHp}`);
     const status: string[] = [];
     if (sim.block > 0) status.push(`Блок: ${sim.block}`);
     if (sim.weaponBuff.time > 0) status.push(`Оружие ×${sim.weaponBuff.mult}: ${sim.weaponBuff.time.toFixed(1)} с`);

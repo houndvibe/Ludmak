@@ -62,8 +62,8 @@ export interface StepDef {
  */
 export const TUTORIAL_STEPS: StepDef[] = [
   { id: 'accept', scene: 'Home', text: 'Монстр пришёл с заказом. Прочитай условие и прими заказ', action: true },
-  { id: 'chest', scene: 'Home', text: 'Окошко закрыто. Загляни в сундук — там можно закупиться', action: true },
-  { id: 'buy', scene: 'Shop', text: 'Купи что-нибудь — покупка сама ляжет в сумки', action: true },
+  { id: 'chest', scene: 'Home', text: 'На сегодня больше нет посетителей. Нужно подготовиться к охоте - загляни в магазин', action: true },
+  { id: 'buy', scene: 'Shop', text: 'Купи что-нибудь: перетащи товар вниз, в «Твои вещи». Покупка сама ляжет в сумки', action: true },
   { id: 'shopHome', scene: 'Shop', text: 'Покупка уже в сумках. Возвращайся домой', action: true },
   { id: 'bags', scene: 'Home', text: 'Загляни в сумки — разложи снаряжение', action: true },
   { id: 'drag', scene: 'Backpack', text: 'Перетащи предмет мышью. Правая кнопка — поворот', action: true },

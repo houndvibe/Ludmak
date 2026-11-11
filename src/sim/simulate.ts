@@ -3,28 +3,36 @@
 //
 // Бот: лечение — когда оно не уйдёт впустую; остальные расходники (бомба, масло, мандрагора) —
 // по одному заряду каждого предмета на врага, в начале боя с ним (оглушение — только если враг не оглушён).
-// Никогда не отступает. Расходники тратятся как в игре: заряды кончились — предмет пропал до конца дня.
+// Заказы бот выбирает из очереди: босс — всегда, дальше — где условие не отключает его предметы, в остальном как придут.
+// Основные таблицы — бот никогда не отступает. Отдельная таблица «Бот-игрок» — варианты с отступлением на привале
+// и с неполным набором заказов. Расходники тратятся как в игре: заряды кончились — предмет пропал до конца дня.
 //
 // Эталонные сборки по ночам (REF): «осмысленная» — с позициями под соседство и с лечением;
 // «наивная» — те же предметы, разложенные случайно (в каждом прогоне заново), без учёта соседства.
 // Бюджет сборки к ночи n = стартовые монеты + Σ(доход − платёж − восполнение расходников) за прошлые ночи.
+// Дополнительно: альтернативные сборки (щит, масло, мандрагора, проклятие) и «откуда урон» — урон по типам врагов
+// и здоровье героя на привалах.
 import {
   DEBT_PAYMENTS,
-  HERO_MAX_HP,
+  HERO_HP_BY_NIGHT,
   ITEM_STATS,
   LEVEL_BY_NIGHT,
   NIGHTS,
   START_COINS,
+  SHOP_SIZE,
+  SHOP_TIER_WEIGHTS_BY_NIGHT,
   START_ITEMS,
 } from '../config/balance';
 import { CLIENT_IDS, CLIENTS, type ClientId } from '../data/clients';
+import { ENEMIES, ENEMY_IDS, type EnemyId } from '../data/enemies';
 import { ITEM_IDS, ITEMS, type ItemId } from '../data/items';
 import { MODIFIER_IDS, MODIFIERS, type ModifierId } from '../data/modifiers';
 import { canPlace, findSpot, MASK, type OwnedItem } from '../systems/backpack';
 import { BattleSim, type ChainLink } from '../systems/battle';
-import { generateQueue, levelForNight, rollEnemies, type Contract } from '../systems/contracts';
+import { fixedContract, generateQueue, levelForNight, rollEnemies, type Contract } from '../systems/contracts';
 import type { Rng } from '../systems/random';
-import { computePower, gearSummary, maxCharges } from '../systems/synergy';
+import { computePower, gearSummary, matches, maxCharges } from '../systems/synergy';
+import { rollShopOffers } from '../systems/shop';
 
 const RUNS = 500;
 /** Шаг симуляции — как кадр игры при 60 fps. */
@@ -109,18 +117,63 @@ interface DayResult {
   income: number;
   /** Сколько стоит купить заново потраченные за день заряды расходников. */
   replacement: number;
+  /** Отступил на привале (бот с правилом отступления). */
+  retreated: boolean;
+  /** Сколько заказов выполнено. */
+  done: number;
 }
+
+/** Правила бота сверх базовых: отступить на привале, если здоровья меньше этой доли (null — не отступать). */
+interface BotRules {
+  retreatBelow: number | null;
+}
+
+/** Учёт урона за много прогонов: по типам врагов, самоурон, лечение, здоровье на привалах. */
+interface DamageTrack {
+  byEnemy: Map<EnemyId, { fights: number; taken: number }>;
+  self: number;
+  healed: number;
+  /** Здоровье (доля от максимума) на привале после заказа k: сумма и число замеров. */
+  rest: { sum: number; n: number }[];
+  days: number;
+}
+
+const newTrack = (): DamageTrack => ({ byEnemy: new Map(), self: 0, healed: 0, rest: [], days: 0 });
 
 /** Стоимость одного заряда предмета: цена всех вложенных копий / заряды на этом уровне. */
 const chargePrice = (id: ItemId, star: number) => (ITEM_STATS[id].price * 2 ** (star - 1)) / (maxCharges(id, star) ?? 1);
 
-function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng): DayResult {
+function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng, rules?: BotRules, track?: DamageTrack): DayResult {
   const sim = new BattleSim({ items, chain: plan.chain, clients: plan.clients, night, rng });
   let t = 0;
   let used = new Set<number>(); // какие небоевые расходники уже применены к текущему врагу
+  let retreated = false;
+  const countFight = () => {
+    if (!track) return;
+    const id = sim.enemy.id;
+    const e = track.byEnemy.get(id) ?? { fights: 0, taken: 0 };
+    e.fights++;
+    track.byEnemy.set(id, e);
+  };
+  if (track) track.days++;
+  countFight();
   while (sim.status === 'fight' || sim.status === 'enemyDown') {
     if (sim.status === 'enemyDown') {
+      if (sim.nextIsNewContract) {
+        const k = plan.chain[sim.index].contract;
+        if (track) {
+          const r = (track.rest[k] ??= { sum: 0, n: 0 });
+          r.sum += sim.heroHp / sim.heroMaxHp;
+          r.n++;
+        }
+        // Привал: отступить, если здоровья мало и заказчик (Упырь) не держит.
+        if (rules?.retreatBelow != null && !sim.retreatBlockedBy && sim.heroHp < rules.retreatBelow * sim.heroMaxHp) {
+          retreated = true;
+          break;
+        }
+      }
       sim.advance();
+      countFight();
       used = new Set();
       t = 0;
       continue;
@@ -129,7 +182,7 @@ function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng): Da
       if (a.disabled) continue;
       const heal = Math.round(a.stats.heal ?? 0);
       if (heal > 0) {
-        if (sim.heroHp <= HERO_MAX_HP - heal) sim.useActive(a.item.uid);
+        if (sim.heroHp <= sim.heroMaxHp - heal) sim.useActive(a.item.uid);
         continue;
       }
       if (used.has(a.item.uid)) continue;
@@ -139,7 +192,13 @@ function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng): Da
       sim.useActive(a.item.uid);
     }
     sim.step(DT);
-    sim.drain();
+    for (const e of sim.drain()) {
+      if (!track) continue;
+      if (e.type === 'heroHit') {
+        if (e.self) track.self += e.taken;
+        else track.byEnemy.get(sim.enemy.id)!.taken += e.taken;
+      } else if (e.type === 'heroHeal') track.healed += e.amount;
+    }
     t += DT;
     if (t > MAX_SECONDS_PER_ENEMY) {
       sim.heroHp = 0;
@@ -148,16 +207,21 @@ function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng): Da
   }
   const won = sim.status === 'won';
 
-  // Доход: как contractResults в state.ts при победе или смерти (бот не отступает).
+  // Доход: как contractResults в state.ts — победа, смерть (полная неустойка) или отступление (доля неустойки).
   let income = 0;
+  let done = 0;
+  const defeated = sim.defeated;
   if (plan.contracts) {
-    const defeated = sim.defeated;
     let start = 0;
     plan.contracts.forEach((c, i) => {
       const total = c.enemies.length;
-      const done = defeated - start >= total;
+      const killed = Math.min(total, Math.max(0, defeated - start));
       start += total;
-      income += done ? Math.max(0, c.reward - sim.stolen[i]) : -c.penalty;
+      if (killed >= total) {
+        income += Math.max(0, c.reward - sim.stolen[i]);
+        done++;
+      } else if (retreated) income -= Math.ceil((c.penalty * (total - killed)) / total);
+      else income -= c.penalty;
     });
   }
 
@@ -169,7 +233,7 @@ function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng): Da
     const left = sim.slots.find((s) => s.item.uid === it.uid)?.charges ?? 0;
     replacement += ((it.charges ?? max) - left) * chargePrice(it.id, it.star ?? 1);
   }
-  return { hp: won ? sim.heroHp : 0, won, income, replacement };
+  return { hp: won || retreated ? sim.heroHp : 0, won, income, replacement, retreated, done };
 }
 
 interface Stats {
@@ -180,10 +244,21 @@ interface Stats {
   income: number;
   incomePerContract: number;
   replacement: number;
+  /** Доля дней с отступлением, %, и выполненных заказов в среднем. */
+  retreats: number;
+  done: number;
 }
 
 /** RUNS прогонов дня. naive — сборка раскладывается случайно в каждом прогоне. */
-function simulate(night: number, build: BuildEntry[], plan: (rng: Rng) => DayPlan, naive = false, seed = 1): Stats {
+function simulate(
+  night: number,
+  build: BuildEntry[],
+  plan: (rng: Rng) => DayPlan,
+  naive = false,
+  seed = 1,
+  rules?: BotRules,
+  track?: DamageTrack,
+): Stats {
   const rng = seeded(seed);
   const layoutRng = seeded(seed * 7919 + 17);
   const fixed = pack(build).items;
@@ -192,16 +267,20 @@ function simulate(night: number, build: BuildEntry[], plan: (rng: Rng) => DayPla
   let income = 0;
   let contracts = 0;
   let replacement = 0;
+  let retreats = 0;
+  let done = 0;
   for (let i = 0; i < RUNS; i++) {
     const p = plan(rng);
     // Свежие копии предметов: заряды в каждом прогоне свои.
     const items = naive ? packRandom(build, layoutRng) : fixed.map((it) => ({ ...it }));
-    const r = playDay(items, p, night, rng);
+    const r = playDay(items, p, night, rng, rules, track);
     if (r.won) wins++;
-    hps.push((r.hp / HERO_MAX_HP) * 100);
+    hps.push((r.hp / HERO_HP_BY_NIGHT[night - 1]) * 100);
     income += r.income;
     contracts += p.contracts?.length ?? 0;
     replacement += r.replacement;
+    if (r.retreated) retreats++;
+    done += r.done;
   }
   hps.sort((a, b) => a - b);
   return {
@@ -211,12 +290,25 @@ function simulate(night: number, build: BuildEntry[], plan: (rng: Rng) => DayPla
     income: income / RUNS,
     incomePerContract: contracts ? income / contracts : 0,
     replacement: replacement / RUNS,
+    retreats: (retreats / RUNS) * 100,
+    done: done / RUNS,
   };
 }
 
-/** Обычный день: полный набор заказов из очереди (условия заказчиков, модификаторы, награды). */
-const queueDay = (night: number) => (rng: Rng): DayPlan => {
-  const contracts = generateQueue(night, rng).slice(0, levelForNight(night));
+/** Сколько предметов сборки отключит условие заказчика. */
+const bannedIn = (build: BuildEntry[], client: ClientId) =>
+  build.filter((e) => (CLIENTS[client].condition.ban ?? []).some((sel) => matches(sel, idOf(e)))).length;
+
+/**
+ * Обычный день: заказы из очереди (условия заказчиков, модификаторы, награды). Бот выбирает, как игрок:
+ * заказ на босса — всегда; остальные — сначала те, где условие не отключает его предметы, в остальном в порядке очереди.
+ */
+const queueDay = (night: number, take = levelForNight(night), build: BuildEntry[] = []) => (rng: Rng): DayPlan => {
+  const queue = generateQueue(night, rng);
+  const isBoss = (c: Contract) => c.enemies.some((e) => ENEMIES[e].boss);
+  // Сортировка устойчивая: среди заказов без запретов порядок очереди (случайный) сохраняется — как у среднего игрока.
+  const ordered = [...queue.filter(isBoss), ...queue.filter((c) => !isBoss(c)).sort((x, y) => bannedIn(build, x.client) - bannedIn(build, y.client))];
+  const contracts = ordered.slice(0, Math.max(1, take));
   const chain = contracts.flatMap((c, ci) => c.enemies.map((enemy, j) => ({ enemy, contract: ci, mod: c.mods[j] })));
   return { chain, clients: contracts.map((c) => c.client), contracts };
 };
@@ -245,13 +337,13 @@ const pad = (s: string | number, n: number) => String(s).padStart(n);
 
 console.log(`\n=== Ночь 1: заказов ${levelForNight(1)}, прогонов на вариант ${RUNS} ===\n`);
 const base: BuildEntry[] = [...START_ITEMS];
-const a = simulate(1, base, queueDay(1));
+const a = simulate(1, base, queueDay(1, undefined, base));
 console.log(`а) ${names(base).padEnd(44)} ${fmt(a)}`);
 
 // Покупки, доступные в ночь 1: магазин предлагает только редкость 1, денег — стартовые монеты.
 const night1Shop = ITEM_IDS.filter((id) => ITEMS[id].tier === 1 && ITEM_STATS[id].price <= START_COINS);
 const withItem = night1Shop
-  .map((id) => ({ id, r: simulate(1, [...base, id], queueDay(1)) }))
+  .map((id) => ({ id, r: simulate(1, [...base, id], queueDay(1, undefined, [...base, id])) }))
   .sort((x, y) => y.r.medianHp - x.r.medianHp || y.r.wins - x.r.wins);
 const best = withItem[0];
 console.log(`б) ${names([...base, best.id]).padEnd(44)} ${fmt(best.r)}   ← лучшая покупка ночи 1`);
@@ -315,8 +407,8 @@ const meaningful: Stats[] = [];
 console.log(`\n=== Бой: полный набор заказов по уровню, случайные заказчики и модификаторы, ${RUNS} прогонов ===\n`);
 console.log('Ночь  Заказов  Сборка          Результат                                              Проиграл заказ');
 for (let n = 1; n <= NIGHTS; n++) {
-  const m = simulate(n, REF[n], queueDay(n));
-  const v = simulate(n, REF[n], queueDay(n), true);
+  const m = simulate(n, REF[n], queueDay(n, undefined, REF[n]));
+  const v = simulate(n, REF[n], queueDay(n, undefined, REF[n]), true);
   meaningful[n] = m;
   for (const [title, r] of [['осмысленная', m], ['наивная', v]] as const) {
     console.log(`  ${n}      ${levelForNight(n)}     ${title.padEnd(14)}  ${fmt(r)}      ${(100 - r.wins).toFixed(0).padStart(3)}%`);
@@ -368,16 +460,20 @@ console.log(
 
 const fixedDay = (night: number, client: ClientId, mod: ModifierId | null) => (rng: Rng): DayPlan => {
   const level = levelForNight(night);
-  const chain: ChainLink[] = [];
-  for (let c = 0; c < level; c++) for (const enemy of rollEnemies(night, rng, 2)) chain.push({ enemy, contract: c, mod });
-  return { chain, clients: Array.from({ length: level }, () => client) };
+  const contracts = Array.from({ length: level }, () => fixedContract(night, client, rollEnemies(night, rng), rng));
+  const chain: ChainLink[] = contracts.flatMap((c, ci) => c.enemies.map((enemy) => ({ enemy, contract: ci, mod })));
+  return { chain, clients: contracts.map((c) => c.client), contracts };
 };
 const short = (r: Stats) => `${r.wins.toFixed(0).padStart(3)}% / ${r.medianHp.toFixed(0).padStart(3)}%`;
 
-console.log(`\n=== Условия заказчиков: ${levelForNight(3)} заказа одного заказчика, без модификаторов (побед / медиана здоровья) ===\n`);
-console.log(`  ${'Заказчик'.padEnd(36)}${'ночь 2'.padEnd(16)}${'ночь 3'.padEnd(16)}`);
+console.log(`\n=== Условия заказчиков: все заказы дня — от одного заказчика, без модификаторов ===`);
+console.log('    Ячейка: побед / медиана здоровья / доход за заказ (награда минус неустойки; у Кикиморы — в счёт долга).\n');
+console.log(`  ${'Заказчик'.padEnd(36)}${[2, 3, 4].map((n) => `ночь ${n}`.padEnd(24)).join('')}`);
 for (const client of CLIENT_IDS) {
-  const cells = [2, 3].map((n) => short(simulate(n, REF[n], fixedDay(n, client, null))).padEnd(16));
+  const cells = [2, 3, 4].map((n) => {
+    const r = simulate(n, REF[n], fixedDay(n, client, null));
+    return `${short(r)} / ${pad(r.incomePerContract.toFixed(0), 3)}`.padEnd(24);
+  });
   console.log(`  ${`${CLIENTS[client].name} «${CLIENTS[client].condition.title}»`.padEnd(36)}${cells.join('')}`);
 }
 
@@ -386,5 +482,173 @@ console.log(`  ${'Модификатор'.padEnd(36)}${'ночь 3'.padEnd(16)}$
 for (const mod of [null, ...MODIFIER_IDS]) {
   const cells = [3, 4].map((n) => short(simulate(n, REF[n], fixedDay(n, 'vodyanoy', mod))).padEnd(16));
   console.log(`  ${(mod ? MODIFIERS[mod].name : 'без модификатора').padEnd(36)}${cells.join('')}`);
+}
+
+// ─── Альтернативные сборки ───────────────────────────────────────────────────
+// Те же ночи и бюджет, что у эталона, но с предметами, которых в эталоне нет: щит, масло, мандрагора, проклятие.
+// Раскладка — под соседство: Алхимия рядом с Оружием, Еда подальше от Алхимии и Огня, Проклятие подальше от Серебра.
+// Сравнение — с эталоном той же ночи (полный набор заказов, случайные заказчики и модификаторы).
+
+const A = {
+  daggerB3: { id: 'silver_dagger', col: 3, row: 0 }, // второй кинжал вплотную к первому
+  elixir40: { id: 'healing_elixir', col: 4, row: 0 }, // у второго кинжала (Алхимия к оружию)
+  breadL: { id: 'bread', col: 0, row: 2 }, // у меча, подальше от Алхимии
+  shieldR: { id: 'wooden_shield', col: 6, row: 2 },
+  torchR: { id: 'torch', col: 5, row: 2 },
+  torchLow: { id: 'torch', col: 6, row: 4, rotated: true },
+  oilTop: { id: 'oil_vs_humans', col: 3, row: 0 }, // между кинжалами
+  mandrakeTop: { id: 'mandrake', col: 3, row: 0 }, // между кинжалами
+  oilL: { id: 'oil_vs_humans', col: 0, row: 2 }, // у меча, вместо бомбы
+  mandrakeL: { id: 'mandrake', col: 0, row: 2 }, // у меча, вместо бомбы
+  boneR: { id: 'bone_amulet', col: 5, row: 2 }, // у топора
+  breadR: { id: 'bread', col: 5, row: 3 }, // у ладанки (Еда к амулету) и топора
+  elixirLow: { id: 'healing_elixir', col: 6, row: 4 },
+  torchTop: { id: 'torch', col: 5, row: 0 }, // у эликсира (Огонь к Алхимии)
+  // Новые предметы (шаг 5): мечи вокруг точильного камня, серпы вокруг ладанки, окорок вместо хлеба.
+  swordL0: { id: 'steel_sword', col: 0, row: 2 },
+  stoneL: { id: 'whetstone', col: 1, row: 3 }, // между двумя мечами
+  swordL2: { id: 'steel_sword', col: 2, row: 2 },
+  breadStone: { id: 'bread', col: 1, row: 2 }, // над камнем (Еда к амулету)
+  sickleA: { id: 'rusty_sickle', col: 2, row: 0 },
+  boneTop: { id: 'bone_amulet', col: 3, row: 0 }, // между серпами
+  sickleB: { id: 'rusty_sickle', col: 4, row: 0 },
+  breadBone: { id: 'bread', col: 3, row: 1 }, // под ладанкой
+  hamLow: { id: 'smoked_ham', col: 6, row: 4, rotated: true }, // под топором, подальше от Алхимии
+} satisfies Record<string, BuildEntry>;
+
+const ALT: Record<number, { name: string; build: BuildEntry[] }[]> = {
+  3: [
+    { name: 'щит вместо подковы', build: [P.sword, P.daggerA, A.daggerB3, A.elixir40, A.breadL, A.shieldR] },
+    { name: 'щит + факел вместо подковы', build: [P.sword, P.daggerA, A.daggerB3, A.elixir40, A.breadL, A.shieldR, A.torchR] },
+    { name: 'масло вместо подковы', build: [P.sword, P.daggerA, A.oilTop, P.daggerB, A.breadL, P.elixirTop] },
+    { name: 'мандрагора вместо подковы', build: [P.sword, P.daggerA, A.mandrakeTop, P.daggerB, A.breadL, P.elixirTop] },
+    { name: 'два меча без камня (для сравнения)', build: [A.swordL0, A.swordL2, A.breadStone, P.daggerA, A.daggerB3, A.elixir40] },
+    { name: 'новое: два меча + точильный камень', build: [A.swordL0, A.stoneL, A.swordL2, A.breadStone, P.daggerA, A.daggerB3, A.elixir40] },
+    { name: 'новое: серпы + ладанка', build: [P.sword, A.sickleA, A.boneTop, A.sickleB, A.breadBone, P.elixirTop] },
+  ],
+  4: [
+    { name: 'щит + эликсир + факел вместо топора', build: [...REF[3], P.bomb, A.shieldR, P.elixirLeft, A.torchLow] },
+    { name: 'масло вместо бомбы', build: [...REF[3], A.oilL, P.axe] },
+    { name: 'мандрагора вместо бомбы', build: [...REF[3], A.mandrakeL, P.axe] },
+    { name: 'проклятие: топор + ладанка', build: [P.sword, P.daggerA, A.daggerB3, A.elixir40, P.axe, A.boneR, A.breadR, P.elixirLeft] },
+    { name: 'новое: окорок вместо хлеба', build: [...REF[4].filter((e) => e !== P.bread), A.hamLow] },
+    { name: 'новое: серпы + ладанка + топор', build: [P.sword, A.sickleA, A.boneTop, A.sickleB, A.breadBone, P.elixirTop, P.bomb, P.axe] },
+  ],
+  5: [
+    { name: 'щит + эликсир вместо топора', build: [...REF[5].filter((e) => e !== P.axe), A.shieldR, A.elixirLow] },
+    { name: 'масло вместо бомбы', build: REF[5].map((e) => (e === P.bomb ? A.oilL : e)) },
+    { name: 'проклятие + бомба + факел', build: [P.sword, P.daggerA, A.daggerB3, A.elixir40, P.axe, A.boneR, A.breadR, P.elixirLeft, P.bomb, A.torchTop] },
+    { name: 'новое: окорок вместо хлеба', build: [...REF[5].filter((e) => e !== P.bread), A.hamLow] },
+  ],
+};
+
+console.log(`\n=== Альтернативные сборки: полный набор заказов, ${RUNS} прогонов (побед / медиана здоровья, доход, восполнение) ===\n`);
+for (const n of [3, 4, 5]) {
+  const row = (name: string, build: BuildEntry[]) => {
+    const { items, skipped } = pack(build);
+    const g = gearSummary(items, computePower(items));
+    const r = simulate(n, build, queueDay(n, undefined, build));
+    console.log(
+      `  ночь ${n}  ${name.padEnd(40)} цена ${pad(cost(build), 3)}  ${short(r)}  доход ${pad(r.income.toFixed(0), 4)}  восп. ${pad(r.replacement.toFixed(0), 3)}` +
+        `  урон/с ${g.dps.toFixed(1).padStart(4)} блок/с ${g.blockPerSec.toFixed(1)}${skipped.length ? `  НЕ ВЛЕЗЛО: ${skipped.join(', ')}` : ''}` +
+        `${g.disabled.length ? `  отключено: ${g.disabled.map((id) => ITEMS[id].name).join(', ')}` : ''}`,
+    );
+  };
+  row('эталон', REF[n]);
+  for (const v of ALT[n]) row(v.name, v.build);
+  console.log('');
+}
+
+// ─── Бот-игрок: отступление и неполный набор ─────────────────────────────────
+// Эталонная сборка ночи. Варианты: полный набор заказов без отступления (как выше); на один заказ меньше уровня;
+// отступление на привале при здоровье ниже 25%; оба правила. Деньги — накопительно по забегу (как в «Экономике»).
+
+const policies: { name: string; take: (n: number) => number; rules?: BotRules }[] = [
+  { name: 'полный набор, без отступления', take: (n) => levelForNight(n) },
+  { name: 'на 1 заказ меньше', take: (n) => levelForNight(n) - 1 },
+  { name: 'полный набор, отступить при <25%', take: (n) => levelForNight(n), rules: { retreatBelow: 0.25 } },
+  { name: 'на 1 меньше + отступить при <25%', take: (n) => levelForNight(n) - 1, rules: { retreatBelow: 0.25 } },
+];
+console.log(`=== Бот-игрок: эталонная сборка, разные правила (${RUNS} прогонов) ===`);
+console.log('    Ячейка: заказов выполнено в среднем / доход / смерть% / отступил%. Касса — монеты после платежа и восполнения, накопительно.\n');
+console.log(`  ${'Правило'.padEnd(36)}${[1, 2, 3, 4, 5].map((n) => `ночь ${n}`.padEnd(30)).join('')}Долг не оплачен`);
+for (const p of policies) {
+  let bank = START_COINS;
+  let broke: number | null = null;
+  const cells: string[] = [];
+  for (let n = 1; n <= NIGHTS; n++) {
+    const r = simulate(n, REF[n], queueDay(n, p.take(n), REF[n]), false, 1, p.rules);
+    const died = 100 - r.wins - r.retreats;
+    bank += r.income - DEBT_PAYMENTS[n - 1] - r.replacement;
+    if (bank < 0 && broke === null) broke = n;
+    cells.push(`${r.done.toFixed(1)} / ${pad(r.income.toFixed(0), 3)} / ${pad(died.toFixed(0), 2)}% / ${pad(r.retreats.toFixed(0), 2)}%`.padEnd(30));
+  }
+  console.log(`  ${p.name.padEnd(36)}${cells.join('')}${broke ? `ночь ${broke}` : 'нет'}`);
+}
+
+// ─── Магазин: шанс увидеть нужное ────────────────────────────────────────────
+// Один ассортимент ночи (без обновлений). «Без гарантии» — каждое место по весам редкости, как было до шага 8;
+// «сейчас» — как в игре (с ночи SHOP_CONSUMABLE_FROM_NIGHT одно место — расходник).
+
+const SHOP_ROLLS = 20000;
+/** Ассортимент без гарантированного расходника: каждое место — редкость по весам, затем предмет равновероятно. */
+function rollPlain(night: number, rng: Rng): ItemId[] {
+  const w = SHOP_TIER_WEIGHTS_BY_NIGHT[night - 1];
+  return Array.from({ length: SHOP_SIZE }, () => {
+    let r = rng() * (w[0] + w[1] + w[2]);
+    let tier = 3;
+    for (let i = 0; i < 3; i++) {
+      r -= w[i];
+      if (r < 0) {
+        tier = i + 1;
+        break;
+      }
+    }
+    const pool = ITEM_IDS.filter((id) => ITEMS[id].tier === tier);
+    return pool[Math.floor(rng() * pool.length)];
+  });
+}
+const HEALS: ItemId[] = ITEM_IDS.filter((id) => (ITEM_STATS[id].heal ?? 0) > 0);
+const CONS: ItemId[] = ITEM_IDS.filter((id) => ITEMS[id].category === 'alchemy' || ITEMS[id].category === 'food');
+console.log(`\n=== Магазин: шанс увидеть в ассортименте ночи (без обновлений), ${SHOP_ROLLS} раскладов ===`);
+console.log('    Ячейка: без гарантии → сейчас. Лечение — эликсир, хлеб, окорок; расходник — Алхимия или Еда.\n');
+console.log(`  ${'Ночь'.padEnd(6)}${'Лечебный эликсир'.padEnd(22)}${'Любое лечение'.padEnd(22)}${'Любой расходник'.padEnd(22)}`);
+for (let n = 2; n <= NIGHTS; n++) {
+  const rng = seeded(100 + n);
+  const count = (roll: (r: Rng) => ItemId[]) => {
+    let elixir = 0;
+    let heal = 0;
+    let cons = 0;
+    for (let i = 0; i < SHOP_ROLLS; i++) {
+      const o = roll(rng);
+      if (o.includes('healing_elixir')) elixir++;
+      if (o.some((id) => HEALS.includes(id))) heal++;
+      if (o.some((id) => CONS.includes(id))) cons++;
+    }
+    return [elixir, heal, cons].map((x) => (x / SHOP_ROLLS) * 100);
+  };
+  const before = count((r) => rollPlain(n, r));
+  const now = count((r) => rollShopOffers(n, r));
+  const cells = before.map((b, i) => `${b.toFixed(0).padStart(3)}% → ${now[i].toFixed(0).padStart(3)}%`.padEnd(22));
+  console.log(`  ${String(n).padEnd(6)}${cells.join('')}`);
+}
+
+// ─── Откуда урон ─────────────────────────────────────────────────────────────
+// Эталон, полный набор заказов. Урон по герою (после блока) по типам врагов, самоурон, лечение,
+// здоровье на привалах. Помогает понять, кто делает день тяжёлым.
+
+console.log(`\n=== Откуда урон: эталонная сборка, полный набор заказов, ${RUNS} прогонов ===\n`);
+for (let n = 1; n <= NIGHTS; n++) {
+  const tr = newTrack();
+  simulate(n, REF[n], queueDay(n, undefined, REF[n]), false, 1, undefined, tr);
+  const total = [...tr.byEnemy.values()].reduce((s, e) => s + e.taken, 0) + tr.self;
+  const parts = ENEMY_IDS.filter((id) => tr.byEnemy.has(id)).map((id) => {
+    const e = tr.byEnemy.get(id)!;
+    return `${ENEMIES[id].name}: ${(e.taken / e.fights).toFixed(0)} за бой (${((e.taken / total) * 100).toFixed(0)}%)`;
+  });
+  const rests = tr.rest.map((r, k) => `после ${k + 1}-го — ${((r.sum / r.n) * 100).toFixed(0)}%`).join(', ');
+  console.log(`  Ночь ${n} (здоровье ${HERO_HP_BY_NIGHT[n - 1]}): урона за день ${(total / tr.days).toFixed(0)}, лечения ${(tr.healed / tr.days).toFixed(0)}, самоурон ${(tr.self / tr.days).toFixed(1)}`);
+  console.log(`     ${parts.join(' · ')}`);
+  if (rests) console.log(`     Здоровье на привалах (из дошедших): ${rests}`);
 }
 console.log('');

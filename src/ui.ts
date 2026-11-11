@@ -1,17 +1,17 @@
 // Общие элементы интерфейса: текст, кнопки, шапка, фон, подписи предметов.
 import * as Phaser from 'phaser';
 import { DEBT_PAYMENTS, ENEMY_ITEM_STATS, ITEM_STATS, NIGHTS, type ItemStats } from './config/balance';
-import { BG_HORSE_KEY, HEADER_LAYOUT, HORSE_ART, tagKey } from './config/assets';
+import { BG_HORSE_KEY, categoryKey, HEADER_LAYOUT, HORSE_ART, type StatIconId } from './config/assets';
 import { FEEL } from './config/feel';
 import { getVolume, isMuted, setVolume, sfx, toggleMute } from './components/Sound';
 import { ENEMIES, type EnemyId } from './data/enemies';
 import { ENEMY_CATEGORY_NAMES, ENEMY_ITEMS, type EnemyItemId } from './data/enemyItems';
 import { CATEGORY_NAMES, ITEMS, type ItemId, type ItemTier } from './data/items';
 import { enemyName, MODIFIERS, type ModifierId } from './data/modifiers';
-import { TAGS, type TagId } from './data/tags';
+import type { TagId } from './data/tags';
 import type { OwnedItem } from './systems/backpack';
 import { enemyDamageMult, enemyPower } from './systems/battle';
-import { auraText, starOf, starStats, type ItemPower } from './systems/synergy';
+import { auraInfo, auraText, starOf, starStats, type ItemPower } from './systems/synergy';
 import { heroLevel, run } from './state';
 import type { EnemyTooltip } from './components/EnemyTooltip';
 
@@ -31,16 +31,14 @@ export const C = {
   good: '#7fd47f',
   bad: '#e06060',
   block: '#7fb6e0',
+  /** Тёмные «чернила» для текста на светлом пергаменте. */
+  ink: '#2b1d12',
+  inkAccent: '#6b2a10',
+  inkDim: '#5c4a38',
 };
 
 /** Цвет рамки редкости (карточка в магазине, клетки в инвентаре). У редкости 1 рамки нет. */
 export const TIER_COLORS: Record<ItemTier, number> = { 1: 0x6b6f78, 2: 0x4f8fd0, 3: 0x4f8fd0 };
-
-/** Цвет основного тега предмета (без свойства «Шумное»); null — тегов нет (меч, щит). */
-export function itemTagColor(id: ItemId): number | null {
-  const tag = ITEMS[id].tags.find((t) => TAGS[t].kind === 'tag');
-  return tag ? TAGS[tag].color : null;
-}
 
 /** Рамка редкости предмета: редкие и особые — цветная рамка, обычные — без рамки (null). */
 export function itemRarityFrame(id: ItemId): number | null {
@@ -222,11 +220,6 @@ export function addHeader(scene: Phaser.Scene, title: string): void {
   );
 }
 
-/** Ряд значков тегов слева направо. */
-export function addTagIcons(scene: Phaser.Scene, x: number, y: number, tags: TagId[], size = 36): void {
-  tags.forEach((t, i) => fit(scene.add.image(x + i * (size + 6) + size / 2, y, tagKey(t)), size, size));
-}
-
 const num = (n: number) => (Number.isInteger(n) ? `${n}` : n.toFixed(1));
 
 /** Характеристики строкой: «урон 6 · раз в 1.5 с». */
@@ -246,7 +239,70 @@ function statsLine(id: ItemId, s: ItemStats, charges?: number): string {
   if (aura) parts.push(aura);
   if (d.mode === 'passive' && s.cooldown) parts.push(`раз в ${s.cooldown} с`);
   if (d.mode === 'active') parts.push(`зарядов: ${charges ?? s.charges} (кончатся — предмет исчезнет)`);
+  else if (s.charges) parts.push(`срабатываний: ${charges ?? s.charges} (кончатся — предмет исчезнет)`);
   return parts.join(' · ');
+}
+
+/** Одна характеристика на карточке: значок + число; hint — полная фраза при наведении; tag — значок тега рядом (аура). */
+export interface StatChip {
+  icon: StatIconId;
+  value: string;
+  hint: string;
+  tag?: TagId;
+  /** Во всю ширину карточки (аура — длинная). */
+  wide?: boolean;
+}
+
+/** Характеристики предмета значками: сначала эффект, потом побочка и аура, в конце — перезарядка или заряды. */
+export function itemStatChips(id: ItemId, s: ItemStats = ITEM_STATS[id], charges?: number): StatChip[] {
+  const d = ITEMS[id];
+  const out: StatChip[] = [];
+  if (s.damage) out.push({ icon: 'damage', value: num(s.damage), hint: `Урон врагу: ${num(s.damage)}` });
+  if (s.heal) out.push({ icon: 'heal', value: num(s.heal), hint: `Лечит героя на ${num(s.heal)}` });
+  if (s.block) out.push({ icon: 'block', value: num(s.block), hint: `Блок: ${num(s.block)} (поглощает удары врага)` });
+  if (s.stun) out.push({ icon: 'stun', value: `${num(s.stun)} с`, hint: `Оглушает врага на ${num(s.stun)} с` });
+  if (s.weaponMult) {
+    const dur = num(s.buffDuration ?? 0);
+    out.push({ icon: 'buff', value: `×${num(s.weaponMult)}`, hint: `Урон оружия ×${num(s.weaponMult)}` });
+    out.push({ icon: 'duration', value: `${dur} с`, hint: `Действует ${dur} с` });
+  }
+  if (s.selfDamage) {
+    const ch = s.selfDamageChance ?? 1;
+    const pct = Math.round(ch * 100);
+    out.push({
+      icon: 'self',
+      value: `−${num(s.selfDamage)}${ch < 1 ? ` · ${pct}%` : ''}`,
+      hint: `Ранит героя на ${num(s.selfDamage)}${ch < 1 ? ` с шансом ${pct}%` : ''}`,
+    });
+  }
+  const aura = auraInfo(id);
+  if (aura) {
+    const pct = `${aura.amount > 0 ? '+' : ''}${Math.round(aura.amount * 100)}%`;
+    out.push({
+      icon: 'aura',
+      value: aura.tag ? pct : `${aura.target} ${pct}`,
+      tag: aura.tag ?? undefined,
+      hint: `Аура: соседнее ${aura.target} ${pct} к ${aura.damage ? 'урону' : 'эффекту'}`,
+      wide: true,
+    });
+  }
+  if (d.mode === 'passive' && s.cooldown) {
+    out.push({ icon: 'cooldown', value: `${num(s.cooldown)} с`, hint: `Срабатывает сам раз в ${num(s.cooldown)} с` });
+  }
+  if (d.mode === 'active') {
+    const n = charges ?? s.charges ?? 0;
+    out.push({ icon: 'charges', value: `${n}`, hint: `Активный: нажми на него в бою. Зарядов: ${n} — кончатся, предмет исчезнет` });
+  } else if (s.charges) {
+    const n = charges ?? s.charges;
+    out.push({ icon: 'charges', value: `${n}`, hint: `Сработает ${n} раз — потом предмет исчезнет` });
+  }
+  return out;
+}
+
+/** Значок типа предмета (верх карточки) — его категория: Оружие, Броня, Амулет, Алхимия, Еда. */
+export function itemTypeIcon(id: ItemId): { key: string; name: string } {
+  const c = ITEMS[id].category;
+  return { key: categoryKey(c), name: CATEGORY_NAMES[c] };
 }
 
 /** Описание предмета из магазина: «Оружие · урон 6 · раз в 1.5 с». */

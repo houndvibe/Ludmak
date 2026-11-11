@@ -39,8 +39,8 @@ export interface GridViewConfig<T extends Placement> {
   /** Предметы (функция — список может меняться: слияние, продажа). В 'edit' компонент меняет их положение напрямую. */
   items: () => T[];
   /** Форма без поворота, ключ текстуры и уровень ★. */
-  /** tint — прозрачная заливка клеток цветом тега; frame — рамка редкости вокруг клеток (null — нет). */
-  shape: (it: T) => { w: number; h: number; key: string; star?: number; tint?: number | null; frame?: number | null };
+  /** frame — рамка редкости вокруг клеток (null — нет). */
+  shape: (it: T) => { w: number; h: number; key: string; star?: number; frame?: number | null };
   /** Текст подсказки при наведении. */
   describe: (it: T) => string;
   onHover?: (text: string | null) => void;
@@ -72,8 +72,7 @@ class Piece {
   readonly img: Phaser.GameObjects.Image;
   private shade: Phaser.GameObjects.Rectangle;
   private frame: Phaser.GameObjects.Rectangle;
-  /** Заливка клеток цветом тега и рамка редкости. */
-  private tintRect: Phaser.GameObjects.Rectangle;
+  /** Рамка редкости вокруг клеток. */
   private rarityFrame: Phaser.GameObjects.Rectangle;
   private badge: Phaser.GameObjects.Text;
   private starText: Phaser.GameObjects.Text;
@@ -84,8 +83,7 @@ class Piece {
   private disabled = false;
   removing = false;
 
-  constructor(private scene: Phaser.Scene, key: string, tint: number | null = null, frame: number | null = null) {
-    this.tintRect = scene.add.rectangle(0, 0, 1, 1, tint ?? 0, FEEL.itemDeco.tintAlpha).setOrigin(0).setVisible(tint !== null);
+  constructor(private scene: Phaser.Scene, key: string, frame: number | null = null) {
     this.rarityFrame = scene.add.rectangle(0, 0, 1, 1).setOrigin(0).setStrokeStyle(FEEL.itemDeco.frameWidth, frame ?? 0).setVisible(frame !== null);
     this.img = scene.add.image(0, 0, key);
     this.shade = scene.add.rectangle(0, 0, 1, 1, 0x000000, 0.6).setOrigin(0);
@@ -94,7 +92,7 @@ class Piece {
     this.badge = scene.add.text(0, 0, '', { ...bold, fontSize: '24px' }).setOrigin(1, 1);
     this.starText = scene.add.text(0, 0, '', { ...bold, fontSize: '24px', color: '#ffd45a' }).setOrigin(0, 0);
     this.labels = scene.add.container(0, 0);
-    this.cont = scene.add.container(0, 0, [this.tintRect, this.img, this.shade, this.rarityFrame, this.frame, this.badge, this.starText, this.labels]);
+    this.cont = scene.add.container(0, 0, [this.img, this.shade, this.rarityFrame, this.frame, this.badge, this.starText, this.labels]);
   }
 
   /** Картинка рисуется в исходной форме w×h и поворачивается на 90°; остальное — по занимаемому месту. */
@@ -105,9 +103,8 @@ class Piece {
     this.fw = f.w * cell;
     this.fh = f.h * cell;
     this.frame.setSize(this.fw - 4, this.fh - 4);
-    // Заливка и рамка редкости — по занимаемым клеткам, с небольшим отступом, чтобы были видны линии сетки.
+    // Рамка редкости — по занимаемым клеткам, с небольшим отступом, чтобы были видны линии сетки.
     const inset = FEEL.itemDeco.inset;
-    this.tintRect.setPosition(-this.fw / 2 + inset, -this.fh / 2 + inset).setSize(this.fw - 2 * inset, this.fh - 2 * inset);
     this.rarityFrame.setPosition(-this.fw / 2 + inset, -this.fh / 2 + inset).setSize(this.fw - 2 * inset, this.fh - 2 * inset);
     const fs = Math.max(16, Math.round(cell * 0.3));
     this.badge.setPosition(this.fw / 2 - 6, this.fh / 2 - 2).setFontSize(fs);
@@ -214,7 +211,7 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
 
   private createPiece(it: T): void {
     const sh = this.cfg.shape(it);
-    const p = new Piece(this.scene, sh.key, sh.tint ?? null, sh.frame ?? null);
+    const p = new Piece(this.scene, sh.key, sh.frame ?? null);
     const interactive = this.cfg.mode !== 'view';
     p.img.setInteractive({ useHandCursor: interactive });
     p.img.on('pointerover', () => {

@@ -54,4 +54,4 @@
 
 - Портреты заказчиков: `public/assets/portraits/clients/` — `vodyanoy.png`, `kikimora.png`, `leshy.png`, `upyr.png`, `prizrak.png`, `gul.png`, все 512×640.
 - Фоны: `public/assets/backgrounds/` — `home.png`, `bg_night.png`, `bg_battle.png` (1920×1080), `horse.png` (около 1200×800).
-- Значки тегов: `public/assets/tags/` — `fire.png`, `silver.png`, `alchemy.png`, `food.png`, `curse.png`, `noisy.png`, все 64×64.
+- Значки тегов: `public/assets/tags/` — `fire.png`, `silver.png`, `curse.png`, `noisy.png`, `heal.png`, `bomb.png`, `elixir.png`, `oil.png`, `stun.png`, все 64×64. Значки категорий: `public/assets/icons/categories/` — `weapon.png`, `armor.png`, `amulet.png`, `alchemy.png`, `food.png`.

@@ -59,8 +59,8 @@ export const ENEMY_ITEMS: Record<EnemyItemId, EnemyItemDef> = {
   staff: { id: 'staff', name: 'Посох', mode: 'action', category: 'weapon', tags: [], w: 1, h: 4, priority: 9 },
   pistol: { id: 'pistol', name: 'Пистоль', mode: 'action', category: 'throw', tags: ['fire', 'noisy'], w: 2, h: 1, priority: 1 },
   silver_rapier: { id: 'silver_rapier', name: 'Серебряная шпага', mode: 'action', category: 'weapon', tags: ['silver'], w: 1, h: 3, priority: 9 },
-  witcher_elixir: { id: 'witcher_elixir', name: 'Эликсир ведьмака', mode: 'action', category: 'potion', tags: ['alchemy'], w: 1, h: 1, priority: 1 },
-  witcher_bomb: { id: 'witcher_bomb', name: 'Бомба ведьмака', mode: 'action', category: 'throw', tags: ['alchemy', 'noisy'], w: 1, h: 1, priority: 2 },
+  witcher_elixir: { id: 'witcher_elixir', name: 'Эликсир ведьмака', mode: 'action', category: 'potion', tags: [], w: 1, h: 1, priority: 1 },
+  witcher_bomb: { id: 'witcher_bomb', name: 'Бомба ведьмака', mode: 'action', category: 'throw', tags: ['noisy'], w: 1, h: 1, priority: 2 },
   silver_sword: { id: 'silver_sword', name: 'Серебряный меч', mode: 'action', category: 'weapon', tags: ['silver'], w: 1, h: 3, priority: 9 },
 };
 

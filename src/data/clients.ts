@@ -57,7 +57,7 @@ export const CLIENTS: Record<ClientId, ClientDef> = {
     name: 'Упырь',
     genitive: 'упыря',
     line: 'Чеснок на всех окнах. Третью неделю голодаю. Вот они, чесночники.',
-    condition: { title: 'Без спешки', noRetreat: true },
+    condition: { title: 'Без спешки', ban: [{ item: 'silver_horseshoe' }], banText: 'серебряная подкова не работает', noRetreat: true },
   },
   prizrak: {
     id: 'prizrak',

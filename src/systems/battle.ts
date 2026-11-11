@@ -10,7 +10,7 @@ import {
   ENEMY_STAT_MULT_BY_NIGHT,
   ENEMY_STATS,
   GHOST_FIRST_HIT_MULT,
-  HERO_MAX_HP,
+  HERO_HP_BY_NIGHT,
   MODIFIER_STATS,
   type EnemyItemStats,
   type ItemStats,
@@ -138,7 +138,9 @@ export class BattleSim {
   readonly night: number;
   private rng: Rng;
 
-  heroHp = HERO_MAX_HP;
+  /** Здоровье героя в эту ночь (растёт с уровнем). */
+  readonly heroMaxHp: number;
+  heroHp: number;
   block = 0;
   weaponBuff = { mult: 1, time: 0 };
   /** Предметы героя, которые ещё в рюкзаке. */
@@ -157,6 +159,8 @@ export class BattleSim {
     this.chain = cfg.chain;
     this.clients = cfg.clients;
     this.night = cfg.night;
+    this.heroMaxHp = HERO_HP_BY_NIGHT[cfg.night - 1];
+    this.heroHp = this.heroMaxHp;
     this.rng = cfg.rng ?? Math.random;
     this.stolen = Array.from({ length: cfg.clients.length }, () => 0);
     this.items = [...cfg.items];
@@ -167,7 +171,7 @@ export class BattleSim {
       disabled: false,
       poisoned: false,
       timer: 0,
-      charges: item.charges ?? 0,
+      charges: item.charges ?? Infinity, // без зарядов (меч, щит) — срабатывает без счёта
     }));
     this.spawn(true); // первый враг и соседство с учётом условия его заказа
     this.explodeAtStart();
@@ -243,7 +247,7 @@ export class BattleSim {
     const torchReason = `сгорела — ${enemyName(link.enemy, link.mod).toLowerCase()}`;
     return (id) => {
       if (ban.some((sel) => matches(sel, id))) return reason;
-      if (torch && ITEMS[id].tags.includes('food')) return torchReason;
+      if (torch && ITEMS[id].category === 'food') return torchReason;
       return null;
     };
   }
@@ -339,6 +343,7 @@ export class BattleSim {
         p.timer -= p.stats.cooldown;
         this.events.push({ type: 'heroItem', uid: p.item.uid, name: p.def.name, active: false });
         this.applyHero(p);
+        if (Number.isFinite(p.charges)) this.spendHeroCharge(p); // хлеб съедается
         if (this.checkEnd()) return;
       }
     }
@@ -381,20 +386,25 @@ export class BattleSim {
       this.enemy.haste = MODIFIER_STATS.lightSleeperSeconds;
       this.events.push({ type: 'woke', seconds: MODIFIER_STATS.lightSleeperSeconds });
     }
-    slot.charges--;
-    this.events.push({ type: 'heroCharge', uid, left: slot.charges });
-    if (slot.charges <= 0) {
-      this.removeSlot(slot);
-      this.recompute(); // его влияние на соседей пропадает сразу
-    }
+    this.spendHeroCharge(slot);
     this.checkEnd();
     return true;
+  }
+
+  /** Потратить заряд предмета героя; последний — предмет исчезает, его влияние на соседей пропадает сразу. */
+  private spendHeroCharge(slot: HeroSlot): void {
+    slot.charges--;
+    this.events.push({ type: 'heroCharge', uid: slot.item.uid, left: slot.charges });
+    if (slot.charges <= 0) {
+      this.removeSlot(slot);
+      this.recompute();
+    }
   }
 
   private applyHero(slot: HeroSlot): void {
     const { def, stats: s } = slot;
     // Ведьмак уворачивается от первой бомбы: заряд тратится (это делает useActive), эффекта нет.
-    if (def.category === 'bomb' && this.enemy.dodgeBomb) {
+    if (def.tags.includes('bomb') && this.enemy.dodgeBomb) {
       this.enemy.dodgeBomb = false;
       this.events.push({ type: 'dodge', name: ENEMIES[this.enemy.id].name, item: def.name });
       return;
@@ -411,7 +421,7 @@ export class BattleSim {
         this.heroHp = Math.max(0, this.heroHp - dmg);
         this.events.push({ type: 'heroHit', taken: dmg, absorbed: 0, self: true });
       } else {
-        const amount = Math.min(Math.round(s.heal), HERO_MAX_HP - this.heroHp);
+        const amount = Math.min(Math.round(s.heal), this.heroMaxHp - this.heroHp);
         this.heroHp += amount;
         this.events.push({ type: 'heroHeal', amount });
       }
@@ -439,7 +449,7 @@ export class BattleSim {
   private resistMult(def: ItemDef): number {
     const mod = this.enemy.mod;
     let m = 1;
-    if (mod === 'chainmail' && def.category === 'weapon' && !def.tags.includes('fire') && !def.tags.includes('alchemy')) {
+    if (mod === 'chainmail' && def.category === 'weapon' && !def.tags.includes('fire')) {
       m *= MODIFIER_STATS.chainmailMult;
     }
     if (mod === 'pious' && def.tags.includes('curse')) m *= MODIFIER_STATS.piousMult;
