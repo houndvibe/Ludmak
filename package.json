@@ -1,0 +1,20 @@
+{
+  "name": "ludmak",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc",
+    "sim": "vite build --ssr src/sim/simulate.ts --outDir .sim --emptyOutDir --logLevel warn && node .sim/simulate.js"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^6.4.6"
+  }
+}
