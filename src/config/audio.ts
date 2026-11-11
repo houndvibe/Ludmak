@@ -25,6 +25,8 @@ export const SOUND_KEYS = [
   // Бой
   'hit_hero',
   'hit_enemy',
+  'sword_hit',
+  'parry',
   'block',
   'heal',
   'self_damage',
@@ -39,7 +41,6 @@ export const SOUND_KEYS = [
   'retreat',
   // Итоги и конец забега
   'coins',
-  'debt_paid',
   'level_up',
   'game_over',
   'victory',

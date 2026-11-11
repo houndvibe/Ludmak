@@ -3,24 +3,26 @@
 // активные применяются нажатием на предмет. Справа — враг и его сумка (только просмотр).
 import * as Phaser from 'phaser';
 import { GridView } from '../components/GridView';
-import { BATTLE_LAYOUT, BG_BATTLE_KEY, enemyItemKey, enemyKey, HERO_KEY, HORSE_ART, itemKey } from '../config/assets';
+import { BATTLE_LAYOUT, BG_BATTLE_KEY, enemyItemKey, enemyKey, HERO_KEY, HORSE_ART, itemKey, UI_ART } from '../config/assets';
 import { BATTLE_FAST_SPEED } from '../config/balance';
 import { CLIENTS } from '../data/clients';
 import { ENEMIES } from '../data/enemies';
 import { FEEL } from '../config/feel';
-import { tutorialAttach, tutorialBlocking, tutorialDone, type Rect } from '../components/Hints';
+import { tutorialAttach, tutorialBlocking, tutorialDone, tutorialRefresh, type Rect } from '../components/Hints';
 import { playMusic, sfx } from '../components/Sound';
 import { ITEMS, type ItemId } from '../data/items';
 import { enemyName, modifierEffect, MODIFIERS } from '../data/modifiers';
 import { BattleSim, type BattleEvent, type EnemySlot } from '../systems/battle';
+import type { EnemyItemId } from '../data/enemyItems';
 import { footprint, MASK, rectMask, type OwnedItem } from '../systems/backpack';
-import { starOf } from '../systems/synergy';
+import { pairLinks, starOf } from '../systems/synergy';
 import { dayChain, destroyItem, resolveNight, retreatPenalty, run, spendCharge, type DayOutcome } from '../state';
 import {
   addBackground,
   addHorse,
   addModifierBadge,
   addMuteButton,
+  addTopBar,
   addText,
   Button,
   C,
@@ -30,7 +32,9 @@ import {
   fit,
   goto,
   W,
+  addLives,
   itemRarityFrame,
+  TITLE,
 } from '../ui';
 
 const L = BATTLE_LAYOUT;
@@ -65,6 +69,14 @@ export class BattleScene extends Phaser.Scene {
   private itemIds = new Map<number, ItemId>();
   /** До какого момента (time.now) бой стоит — стоп-кадр при смерти врага. */
   private hitStopUntil = 0;
+  /** Картинки атак врага в окне парирования: id атаки → иконка, кольцо и центр. */
+  /** Летящие атаки врага: откуда летит, куда (точка между сетками), текущий радиус зоны клика. */
+  private parryIcons = new Map<number, ParryIcon>();
+  /** Меч-курсор в зоне атак. */
+  private sword!: Phaser.GameObjects.Image;
+  private swordShown = false;
+  /** Идущая прокрутка меча (ПКМ) — останавливается новым взмахом или прокруткой. */
+  private spinTween: Phaser.Tweens.Tween | null = null;
 
   constructor() {
     super('Battle');
@@ -82,22 +94,29 @@ export class BattleScene extends Phaser.Scene {
     this.enemyView = null;
     this.modBadge = null;
     this.hitStopUntil = 0;
+    this.parryIcons = new Map();
+    this.createSword();
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onBattleClick(p));
+    this.linksKey = '';
 
     addBackground(this, BG_BATTLE_KEY);
-    this.add.rectangle(0, 0, W, 80, 0x000000, 0.6).setOrigin(0);
+    addTopBar(this);
     addText(this, 30, 40, `Ночь ${run.night}`, 30).setOrigin(0, 0.5);
     addMuteButton(this, L.mute);
     this.progressText = addText(this, W / 2, 40, '', 30).setOrigin(0.5);
+    addLives(this, W - 30, 40);
     // Условие заказчика текущего врага: меняется вместе с заказом.
     this.conditionText = addText(this, L.conditionBanner.x, L.conditionBanner.y, '', 24, C.accent, {
       fontStyle: 'bold',
       backgroundColor: 'rgba(0,0,0,0.7)',
       padding: { x: 14, y: 6 },
     }).setOrigin(0.5);
-    const speedBtn = new Button(this, L.centerX, 140, 280, 60, 'Ускорение ×1', () => {
+    // Ускорение — в шапке, рядом с «Без звука».
+    const sp = L.speed;
+    const speedBtn = new Button(this, sp.x, sp.y, sp.w, sp.h, 'Ускорение ×1', () => {
       this.speed = this.speed === 1 ? BATTLE_FAST_SPEED : 1;
       speedBtn.setLabel(`Ускорение ×${this.speed}`);
-    });
+    }, 22);
     // Подсказка растёт вверх от нижнего края (над строкой подсказок обучения), в промежутке между сетками.
     this.info = addText(this, L.centerX, L.infoBottom, '', 22, C.text, {
       align: 'center',
@@ -112,7 +131,7 @@ export class BattleScene extends Phaser.Scene {
     const hp = L.heroPortrait;
     this.heroImg = fit(this.add.image(hp.x, hp.y, HERO_KEY), hp.w, hp.h);
     const hx = hp.x + hp.w / 2 + 30;
-    addText(this, hx, hp.y - 110, 'Людьмак', 34, C.accent, { fontStyle: 'bold' });
+    addText(this, hx, hp.y - 110, 'Людьмак', 36, C.accent, TITLE);
     [this.heroBar, this.heroHpText] = this.makeBar(hx, hp.y - 40);
     this.heroStatus = addText(this, hx, hp.y, '', 24, C.block);
 
@@ -120,7 +139,7 @@ export class BattleScene extends Phaser.Scene {
     const ep = L.enemyPortrait;
     this.enemyImg = this.add.image(ep.x, ep.y, enemyKey(this.sim.enemy.id));
     const ex = ep.x - ep.w / 2 - 30;
-    this.enemyName = addText(this, ex, ep.y - 110, '', 34, C.bad, { fontStyle: 'bold' }).setOrigin(1, 0);
+    this.enemyName = addText(this, ex, ep.y - 110, '', 36, C.bad, TITLE).setOrigin(1, 0);
     [this.enemyBar, this.enemyHpText] = this.makeBar(ex - BAR_W, ep.y - 40);
     this.enemyStatus = addText(this, ex, ep.y, '', 24, C.block, { align: 'right' }).setOrigin(1, 0);
 
@@ -169,6 +188,13 @@ export class BattleScene extends Phaser.Scene {
         const a = this.sim.actives.find((s) => !s.disabled && s.charges > 0);
         return a ? this.pieceRect(a.item) : 'skip';
       }
+      if (id === 'parry') {
+        // Шаг ждёт первого замаха врага; пока атаки нет — шага не видно, бой идёт. Подсветка — там, где предмет сейчас.
+        const last = [...this.parryIcons.values()].pop();
+        if (!last) return null;
+        const r = last.r * 1.3;
+        return { x: last.cont.x - r, y: last.cont.y - r, w: r * 2, h: r * 2 };
+      }
       return null;
     });
   }
@@ -177,6 +203,277 @@ export class BattleScene extends Phaser.Scene {
   private pieceRect(it: OwnedItem): Rect {
     const f = footprint(it.id, it.rotated);
     return { x: L.heroGrid.x + it.col * L.cell, y: L.heroGrid.y + it.row * L.cell, w: f.w * L.cell, h: f.h * L.cell };
+  }
+
+  /** Полоски связей соседства в рюкзаке героя: перерисовать, только если соседство изменилось. */
+  private linksKey = '';
+  private syncLinks(): void {
+    const links = pairLinks(this.sim.effects);
+    const key = links.map((l) => `${l.a}:${l.b}:${l.kind}`).join(',');
+    if (key === this.linksKey) return;
+    this.linksKey = key;
+    this.heroView.setLinks(links);
+  }
+
+  // ─── Парирование ─────────────────────────────────────────────────────────
+
+  /**
+   * Атака врага летит из глубины: появляется маленькой и тусклой в своей точке между сетками и за окно парирования
+   * вырастает на месте до полного размера (полный размер — удар). Точка — случайная, подальше от уже летящих
+   * (чисто визуально, на исход боя не влияет).
+   */
+  private spawnParryIcon(id: number, item: EnemyItemId): void {
+    const P = FEEL.parry;
+    const z = L.parryZone;
+    const r = P.size / 2;
+    let best = { x: z.x + z.w / 2, y: z.y + z.h / 2, d: -1 };
+    for (let k = 0; k < 16; k++) {
+      const x = Phaser.Math.Between(z.x + r, z.x + z.w - r);
+      const y = Phaser.Math.Between(z.y + r, z.y + z.h - r);
+      const d = Math.min(Infinity, ...[...this.parryIcons.values()].map((o) => Math.hypot(o.x - x, o.y - y)));
+      if (d > best.d) best = { x, y, d };
+      if (d >= P.minGap) break;
+    }
+    const cont = this.add.container(best.x, best.y).setDepth(60);
+    const glow = this.add.circle(0, 0, r * 0.95, P.glow, P.glowAlpha);
+    const img = fit(this.add.image(0, 0, L.parryIconOverride ?? enemyItemKey(item)), P.size, P.size);
+    cont.add([glow, img]);
+    const ring = this.add.graphics().setDepth(61);
+    const icon: ParryIcon = { cont, img, ring, x: best.x, y: best.y, r };
+    this.parryIcons.set(id, icon);
+    this.placeParryIcon(icon, 0);
+    tutorialRefresh(this); // обучение: первый замах — шаг «Парируй»
+  }
+
+  /** Атака по доле полёта t (0 — только вылетела, 1 — удар): растёт и светлеет с ускорением. */
+  private placeParryIcon(icon: ParryIcon, t: number): void {
+    const P = FEEL.parry;
+    const e = Math.pow(Phaser.Math.Clamp(t, 0, 1), P.growPow);
+    const s = P.startScale + (1 - P.startScale) * e;
+    icon.cont
+      .setScale(s)
+      .setAlpha(P.startAlpha + (1 - P.startAlpha) * e);
+    const v = Math.round(255 * (P.startBright + (1 - P.startBright) * e));
+    icon.img.setTint((v << 16) | (v << 8) | v).setAngle(t * P.spinTurns * 360);
+    // Золотое кольцо стягивается от ringFrom × полный радиус к полному радиусу — сойдётся в момент удара.
+    const R = P.size / 2;
+    const rr = R + (R * P.ringFrom - R) * (1 - Phaser.Math.Clamp(t, 0, 1));
+    icon.ring.clear().lineStyle(P.ringWidth, P.ringColor, 0.45 + 0.55 * t).strokeCircle(icon.x, icon.y, rr);
+    icon.r = (P.size / 2) * Math.max(s * P.hitPad, P.hitMinShare);
+  }
+
+  /** Каждый кадр: атаки летят по оставшемуся времени окна; отменённые (враг умер) убираются. */
+  private syncParryIcons(): void {
+    for (const [id, icon] of this.parryIcons) {
+      const p = this.sim.pending.find((a) => a.id === id);
+      if (p) this.placeParryIcon(icon, 1 - p.left / p.total);
+      else {
+        icon.cont.destroy();
+        icon.ring.destroy();
+        this.parryIcons.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Клик: в зоне атак — взмах меча. Отбивает лезвие: летящая атака засчитана, если её круг касается отрезка лезвия
+   * (кончик → конец лезвия, в положении покоя); рукоятью не отбить. Вне зоны (меча не видно) — точка курсора.
+   * Касается нескольких — отбивается ближайшая к лезвию.
+   */
+  private onBattleClick(p: Phaser.Input.Pointer): void {
+    // ПКМ в зоне атак — прокрутка меча (для красоты, на бой не влияет).
+    if (p.button === 2) {
+      if (this.inParryZone(p)) {
+        this.moveSword(p);
+        this.spinSword();
+      }
+      return;
+    }
+    if (p.button !== 0) return;
+    const inZone = this.inParryZone(p);
+    let blade: Phaser.Geom.Line | null = null;
+    if (inZone) {
+      this.moveSword(p);
+      blade = this.bladeLine();
+      this.swingSword();
+    }
+    let hit: number | null = null;
+    let best = Infinity;
+    for (const [id, icon] of this.parryIcons) {
+      const c = { x: icon.cont.x, y: icon.cont.y };
+      const d = blade ? segmentDist(blade, c.x, c.y) : Math.hypot(p.x - c.x, p.y - c.y);
+      if (d <= icon.r && d < best) {
+        best = d;
+        hit = id;
+      }
+    }
+    if (hit === null || !this.sim.parry(hit)) return;
+    tutorialDone(this, 'parry');
+    this.afterSimChange();
+  }
+
+  /** Лезвие меча в положении покоя (мир): от кончика до конца лезвия (UI_ART.cursorSword.tip → bladeEnd). */
+  private bladeLine(): Phaser.Geom.Line {
+    const S = UI_ART.cursorSword;
+    const k = this.sword.scale;
+    const a = Phaser.Math.DegToRad(S.angle);
+    const world = (q: { x: number; y: number }) => {
+      const dx = (q.x - S.grip.x) * this.sword.width * k;
+      const dy = (q.y - S.grip.y) * this.sword.height * k;
+      return { x: this.sword.x + dx * Math.cos(a) - dy * Math.sin(a), y: this.sword.y + dx * Math.sin(a) + dy * Math.cos(a) };
+    };
+    const t = world(S.tip);
+    const e = world(S.bladeEnd);
+    return new Phaser.Geom.Line(t.x, t.y, e.x, e.y);
+  }
+
+  private inParryZone(p: { x: number; y: number }): boolean {
+    const z = L.parryZone;
+    return p.x >= z.x && p.x <= z.x + z.w && p.y >= z.y && p.y <= z.y + z.h;
+  }
+
+  /**
+   * Меч-курсор — картинка стального меча (UI_ART.cursorSword). Держится за рукоять: вращается вокруг неё, а в покое
+   * кончик клинка ровно на курсоре — точка клика.
+   */
+  private createSword(): void {
+    const S = UI_ART.cursorSword;
+    const P = FEEL.parry;
+    this.sword = this.add.image(0, 0, itemKey(S.item)).setOrigin(S.grip.x, S.grip.y).setDepth(2500).setVisible(false);
+    this.sword.setScale(P.swordSize / this.sword.height).setAngle(S.angle);
+    this.swordShown = false;
+    this.spinTween = null;
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.moveSword(p));
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.input.setDefaultCursor('default'));
+  }
+
+  /** Меч виден только в зоне атак; там же прячется системный курсор. Рукоять ставится так, чтобы кончик (в покое) был на курсоре. */
+  private moveSword(p: { x: number; y: number }): void {
+    const S = UI_ART.cursorSword;
+    const inZone = this.inParryZone(p);
+    // От рукояти до кончика по картинке (px с учётом масштаба), повёрнуто на угол покоя.
+    const k = this.sword.scale;
+    const dx = (S.tip.x - S.grip.x) * this.sword.width * k;
+    const dy = (S.tip.y - S.grip.y) * this.sword.height * k;
+    const a = Phaser.Math.DegToRad(S.angle);
+    const tx = dx * Math.cos(a) - dy * Math.sin(a);
+    const ty = dx * Math.sin(a) + dy * Math.cos(a);
+    this.sword.setPosition(p.x - tx, p.y - ty).setVisible(inZone);
+    if (inZone !== this.swordShown) {
+      this.swordShown = inZone;
+      this.input.setDefaultCursor(inZone ? 'none' : 'default');
+    }
+  }
+
+  /** Взмах: рукоять на месте, клинок рубит вправо (по часовой) и возвращается в покой. */
+  private swingSword(): void {
+    const P = FEEL.parry;
+    const base = UI_ART.cursorSword.angle;
+    this.tweens.killTweensOf(this.sword);
+    this.spinTween?.stop();
+    this.spinTween = null;
+    this.sword.setAngle(base);
+    this.tweens.add({
+      targets: this.sword,
+      angle: base + P.swingDeg,
+      duration: P.swingMs * 0.5,
+      ease: 'Cubic.easeOut',
+      onComplete: () => this.tweens.add({ targets: this.sword, angle: base, duration: P.swingMs * 0.5, ease: 'Sine.easeInOut' }),
+    });
+  }
+
+  /** Прокрутка на 360° вокруг рукояти с шлейфом: за мечом остаются гаснущие светлые копии. */
+  private spinSword(): void {
+    const P = FEEL.parry;
+    const base = UI_ART.cursorSword.angle;
+    this.tweens.killTweensOf(this.sword);
+    this.spinTween?.stop();
+    this.sword.setAngle(base);
+    let last = -Infinity;
+    const ghost = () => {
+      const g = this.add
+        .image(this.sword.x, this.sword.y, this.sword.texture.key)
+        .setOrigin(this.sword.originX, this.sword.originY)
+        .setScale(this.sword.scale)
+        .setAngle(this.sword.angle)
+        .setTint(P.trailTint)
+        .setAlpha(P.trailAlpha)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(this.sword.depth - 1);
+      this.tweens.add({ targets: g, alpha: 0, duration: P.trailFadeMs, onComplete: () => g.destroy() });
+    };
+    this.spinTween = this.tweens.addCounter({
+      from: 0,
+      to: 360,
+      duration: P.spinMs,
+      ease: 'Cubic.easeInOut',
+      onUpdate: (tw) => {
+        this.sword.setAngle(base + (tw.getValue() ?? 0));
+        if (this.time.now - last >= P.trailEveryMs) {
+          last = this.time.now;
+          ghost();
+        }
+      },
+      onComplete: () => this.sword.setAngle(base),
+    });
+  }
+
+  /** Удар пришёл: парирован — искры, звук, предмет отбит; нет — предмет долетает до портрета героя. */
+  private resolveParryIcon(id: number, parried: boolean): void {
+    const icon = this.parryIcons.get(id);
+    if (!icon) return;
+    this.parryIcons.delete(id);
+    icon.ring.destroy();
+    const P = FEEL.parry;
+    const { x, y } = icon.cont;
+    if (!parried) {
+      this.tweens.add({
+        targets: icon.cont,
+        x: L.heroPortrait.x,
+        y: L.heroPortrait.y,
+        scale: icon.cont.scale * 0.7,
+        duration: P.hitFlyMs,
+        ease: 'Quad.easeIn',
+        onComplete: () => icon.cont.destroy(),
+      });
+      return;
+    }
+    // Отбит вправо (по ходу взмаха) и вниз, крутится и гаснет.
+    this.tweens.add({
+      targets: icon.cont,
+      x: x + P.knockDist,
+      y: y + P.knockDist * 0.8,
+      angle: 540,
+      scale: icon.cont.scale * 0.45,
+      alpha: 0,
+      duration: P.knockMs,
+      ease: 'Cubic.easeOut',
+      onComplete: () => icon.cont.destroy(),
+    });
+    sfx(this, 'parry');
+    this.sparks(x, y);
+    this.floatText(x, y - P.size * 0.6, 'Парировано!', C.accent, P.textSize);
+  }
+
+  /** Вспышка искр, нарисованная кодом: короткие светлые черточки разлетаются и гаснут. */
+  private sparks(x: number, y: number): void {
+    const P = FEEL.parry;
+    for (let i = 0; i < P.sparks; i++) {
+      const a = (Math.PI * 2 * i) / P.sparks + Phaser.Math.FloatBetween(-0.2, 0.2);
+      const len = Phaser.Math.Between(12, 28);
+      const s = this.add.rectangle(x, y, len, 4, i % 3 === 0 ? 0xffffff : i % 3 === 1 ? 0xfff2b0 : 0xffc04a).setRotation(a).setDepth(65);
+      const dist = P.sparkDist * Phaser.Math.FloatBetween(0.6, 1);
+      this.tweens.add({
+        targets: s,
+        x: x + Math.cos(a) * dist,
+        y: y + Math.sin(a) * dist,
+        alpha: 0,
+        scaleX: 0.3,
+        duration: P.sparkMs,
+        ease: 'Cubic.easeOut',
+        onComplete: () => s.destroy(),
+      });
+    }
   }
 
   /** Полоска здоровья: x — левый край. */
@@ -194,7 +491,7 @@ export class BattleScene extends Phaser.Scene {
     const def = ENEMIES[sim.enemy.id];
     this.enemyImg.setTexture(enemyKey(def.id));
     fit(this.enemyImg, L.enemyPortrait.w, L.enemyPortrait.h);
-    // Имя с модификатором бывает длинным: уменьшаем шрифт, чтобы не залезть под кнопку ускорения.
+    // Имя с модификатором бывает длинным: уменьшаем шрифт, чтобы не залезть в середину экрана.
     this.enemyName.setFontSize(34).setText(enemyName(def.id, mod));
     if (this.enemyName.width > L.enemyNameMaxW) this.enemyName.setFontSize(Math.floor((34 * L.enemyNameMaxW) / this.enemyName.width));
 
@@ -247,13 +544,16 @@ export class BattleScene extends Phaser.Scene {
     if (this.sim.status !== 'fight') return;
     if (this.time.now < this.hitStopUntil) return; // стоп-кадр: бой замер на мгновение
     if (tutorialBlocking(this)) return; // обучение: пока открыт шаг, бой на паузе
-    this.sim.step((delta / 1000) * this.speed);
+    // Окна парирования идут в реальном времени: ускорение на них не влияет.
+    this.sim.step((delta / 1000) * this.speed, delta / 1000);
     this.afterSimChange();
   }
 
   /** Нарисовать события боя и среагировать на смену статуса. */
   private afterSimChange(): void {
     for (const e of this.sim.drain()) this.showEvent(e);
+    this.syncParryIcons();
+    this.syncLinks();
     this.refresh();
     const status = this.sim.status;
     if (status === this.shownStatus) return;
@@ -286,7 +586,7 @@ export class BattleScene extends Phaser.Scene {
 
   /** Короткий баннер посередине: всплывает и тает, игру не останавливает. */
   private banner(text: string, color: string, delay: number): void {
-    const t = addText(this, L.centerX, L.bannerY, text, FEEL.banner.size, color, { fontStyle: 'bold', stroke: '#000', strokeThickness: 8 })
+    const t = addText(this, L.centerX, L.bannerY, text, FEEL.banner.size, color, { ...TITLE, stroke: '#000', strokeThickness: 8 })
       .setOrigin(0.5)
       .setDepth(75)
       .setAlpha(0);
@@ -337,7 +637,9 @@ export class BattleScene extends Phaser.Scene {
         if (e.taken > 0) {
           this.floatNumber(L.floatEnemyX, `−${e.taken}`, e.buffed || e.firstStrike ? F.buffedDamage : F.enemyDamage, e.taken);
           this.hitFx(this.enemyImg, L.enemyPortrait.x);
-          sfx(this, 'hit_enemy');
+          // Клинок героя (оружие без огня: меч, кинжал, топор, серп) звенит, остальное — обычный удар.
+          const d = ITEMS[e.item];
+          sfx(this, d.category === 'weapon' && !d.tags.includes('fire') ? 'sword_hit' : 'hit_enemy');
         }
         if (e.firstStrike) this.floatText(L.floatEnemyX, L.floatY + 60, 'удар из тишины', F.buffedDamage, 26);
         if (e.halved) this.floatText(L.floatEnemyX, L.floatY + 110, 'урон вполовину', C.dim, 22);
@@ -408,6 +710,12 @@ export class BattleScene extends Phaser.Scene {
         this.floatText(L.centerX, L.itemNameY - 60, `${e.name}: ${e.reason}`, C.bad, 26);
         sfx(this, 'item_burn');
         break;
+      case 'windup':
+        this.spawnParryIcon(e.id, e.item);
+        break;
+      case 'strike':
+        this.resolveParryIcon(e.id, e.parried);
+        break;
       case 'enemyMiss':
         this.floatText(L.floatHeroX, L.floatY, 'промах!', C.dim, 34);
         break;
@@ -438,7 +746,7 @@ export class BattleScene extends Phaser.Scene {
     const box = this.add.container(L.centerX, 640).setDepth(80);
     box.add(this.add.rectangle(0, 0, 680, 360, 0x000000, 0.88).setStrokeStyle(2, C.border));
     box.add(addText(this, 0, -130, `Заказ выполнен (${defeated} из ${total})`, 34, C.good).setOrigin(0.5));
-    box.add(addText(this, 0, -80, 'Привал', 30, C.text, { fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(addText(this, 0, -80, 'Привал', 34, C.text, TITLE).setOrigin(0.5));
     box.add(addText(this, 0, -36, `Дальше — заказ: ${CLIENTS[run.accepted[next.contract].client].name}.`, 24, C.text).setOrigin(0.5));
     box.add(
       new Button(this, -160, 80, 290, 80, 'Дальше', () => {
@@ -468,7 +776,7 @@ export class BattleScene extends Phaser.Scene {
 
   private finish(outcome: DayOutcome, message: string): void {
     this.refresh();
-    addText(this, L.centerX, 640, message, 60, C.accent, { fontStyle: 'bold', stroke: '#000', strokeThickness: 8 })
+    addText(this, L.centerX, 640, message, 60, C.accent, { ...TITLE, stroke: '#000', strokeThickness: 8 })
       .setOrigin(0.5)
       .setDepth(90);
     this.time.delayedCall(1500, () => {
@@ -540,4 +848,24 @@ export class BattleScene extends Phaser.Scene {
     this.time.delayedCall(70, () => img.clearTint());
     this.tweens.add({ targets: img, x: baseX + 14, duration: 45, yoyo: true, repeat: 1, onComplete: () => (img.x = baseX) });
   }
+}
+
+/** Летящая атака врага: контейнер (свечение + предмет), его точка, радиус зоны клика сейчас. */
+interface ParryIcon {
+  cont: Phaser.GameObjects.Container;
+  img: Phaser.GameObjects.Image;
+  /** Золотое кольцо-таймер вокруг точки (не масштабируется вместе с предметом). */
+  ring: Phaser.GameObjects.Graphics;
+  x: number;
+  y: number;
+  r: number;
+}
+
+/** Расстояние от точки до отрезка (не до бесконечной прямой). */
+function segmentDist(l: Phaser.Geom.Line, x: number, y: number): number {
+  const dx = l.x2 - l.x1;
+  const dy = l.y2 - l.y1;
+  const len2 = dx * dx + dy * dy || 1;
+  const k = Phaser.Math.Clamp(((x - l.x1) * dx + (y - l.y1) * dy) / len2, 0, 1);
+  return Math.hypot(x - (l.x1 + k * dx), y - (l.y1 + k * dy));
 }

@@ -16,8 +16,8 @@ export interface ClientCondition {
   firstHitBonus?: boolean;
   /** Пока заказ не выполнен, на привале нельзя отступить. */
   noRetreat?: boolean;
-  /** Награда не выдаётся монетами, а уменьшает ближайший платёж по долгу; остаток — в монеты. */
-  payDebt?: boolean;
+  /** Аванс: награда выплачивается сразу при принятии заказа; провал — аванс возвращается и неустойка (CLIENT_PENALTY_MULT). */
+  advance?: boolean;
 }
 
 export interface ClientDef {
@@ -42,8 +42,8 @@ export const CLIENTS: Record<ClientId, ClientDef> = {
     id: 'kikimora',
     name: 'Кикимора',
     genitive: 'кикиморы',
-    line: 'Про должок помнишь? Вот и славно. А пока работёнка: соседи мне печь заложили.',
-    condition: { title: 'Ростовщица', payDebt: true },
+    line: 'Деньги вперёд, мне не жалко. Только не подведи: соседи мне печь заложили.',
+    condition: { title: 'Ростовщица', advance: true },
   },
   leshy: {
     id: 'leshy',
@@ -91,7 +91,7 @@ export function conditionEffect(id: ClientId): string {
   if (c.banText) parts.push(c.banText);
   if (c.firstHitBonus) parts.push(`первый удар по каждому врагу ${times(GHOST_FIRST_HIT_MULT)}`);
   if (c.noRetreat) parts.push('отступить нельзя, пока заказ не выполнен');
-  if (c.payDebt) parts.push('награда идёт в счёт долга');
+  if (c.advance) parts.push('награда сразу, авансом; провал — вернуть аванс');
   const reward = CLIENT_REWARD_MULT[id];
   const penalty = CLIENT_PENALTY_MULT[id];
   if (reward) parts.push(`награда ${times(reward)}`);

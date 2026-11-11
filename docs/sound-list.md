@@ -57,7 +57,9 @@
 
 | Ключ | Когда звучит | Частота | Длит. | Как должно звучать | Промпт |
 | --- | --- | --- | --- | --- | --- |
-| `hit_enemy` | герой ранил врага (меч, кинжал, топор, факел) | очень часто | 0,1–0,25 с | удар клинка по телу и одежде, глухой и плотный | `sword hit on a person, cloth and flesh impact, short punchy, no scream` |
+| `hit_enemy` | герой ранил врага не клинком (факел, бомба и т.п.) | очень часто | 0,1–0,25 с | удар клинка по телу и одежде, глухой и плотный | `sword hit on a person, cloth and flesh impact, short punchy, no scream` |
+| `sword_hit` | герой ранил врага клинком (меч, кинжал, топор, серп) | очень часто | 0,1–0,25 с | звон и удар клинка | (файл уже есть: sword_hit.mp3) |
+| `parry` | герой парировал удар врага (нажал картинку атаки вовремя) | часто | 0,2–0,4 с | звонкий металлический лязг с искрами, короткий и яркий | `sword parry, bright metallic clang with sparks, short ringing` |
 | `hit_hero` | враг ранил героя (вилы, копьё, шпага, лепёшка, пуля) | очень часто | 0,15–0,3 с | тупой удар по шкуре плюс короткий звериный выдох или рык | `blunt hit on a furry beast, short grunt of a wolf creature, impact` |
 | `block` | блок поглотил урон или добавился | часто | 0,1–0,25 с | удар по деревянному щиту | `hit on a wooden shield, solid wooden thunk, short` |
 | `heal` | лечение героя (хлеб, эликсир) или врага | часто | 0,3–0,6 с | глоток из склянки или тёплое мерцание | `drinking from a small glass potion bottle, gulp, soft warm chime` |
@@ -77,7 +79,6 @@
 | Ключ | Когда звучит | Длит. | Как должно звучать | Промпт |
 | --- | --- | --- | --- | --- |
 | `coins` | итоги: заработаны монеты | 0,6–1,0 с | кошель монет высыпается на стол | `pouch of coins poured onto a wooden table, rich jingle` |
-| `debt_paid` | итоги: платёж по долгу внесён | 0,6–1,0 с | монеты отсчитывают и сгребают со стола, сухо и устало | `counting coins and sliding them across a table, payment made, slightly reluctant` |
 | `level_up` | итоги: новый уровень (больше заказов за ночь) | 0,8–1,5 с | короткая восходящая фраза на дудке или гуслях | `short rising folk melody on a wooden flute, level up, slavic fantasy` |
 | `game_over` | конец игры: долг не оплачен | 1,5–3,0 с | мрачная нисходящая фраза, скрип и тихий смешок кикиморы | `sad descending folk tune on low strings, creaky, ominous witch chuckle at the end` |
 | `victory` | победа: пережил 5 ночей | 2,0–4,0 с | торжественно, но иронично: бодрая плясовая на гуслях и бубне | `triumphant short slavic folk fanfare, gusli and tambourine, cheerful victory` |
@@ -163,7 +164,6 @@ retreat: Slavic folk fantasy game, rustic medieval village, organic foley. Dry a
 
 ```
 coins: Slavic folk fantasy game, rustic medieval village, organic foley. Dry and clean, no music, no voices. A pouch of coins poured onto a wooden table, rich jingle.
-debt_paid: Slavic folk fantasy game, rustic medieval village, organic foley. Dry and clean, no music, no voices. Coins counted out and slid across a wooden table, a reluctant payment.
 level_up: Slavic folk fantasy game, rustic medieval village. No voices. A short rising folk phrase on a wooden flute, level up.
 game_over: Slavic folk fantasy game, rustic medieval village. No words. A sad descending folk tune on low strings, a creak, and a quiet old witch chuckle at the end.
 victory: Slavic folk fantasy game, rustic medieval village. No voices. A short triumphant but playful Slavic folk fanfare on gusli and tambourine.

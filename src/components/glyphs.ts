@@ -24,7 +24,13 @@ export type GlyphId =
   | 'waves'
   | 'amulet'
   | 'bomb'
-  | 'potion';
+  | 'potion'
+  | 'chain'
+  | 'swords'
+  | 'door'
+  | 'scroll'
+  | 'noRetreat'
+  | 'coinFast';
 
 /** Значок характеристики и его цвет (рисуется на тёмном круге). */
 export const STAT_GLYPHS: Record<StatIconId, { glyph: GlyphId; color: string }> = {
@@ -38,6 +44,12 @@ export const STAT_GLYPHS: Record<StatIconId, { glyph: GlyphId; color: string }> 
   duration: { glyph: 'hourglass', color: '#ece6d6' },
   self: { glyph: 'drop', color: '#e04848' },
   aura: { glyph: 'aura', color: '#c9a0ff' },
+  enemies: { glyph: 'swords', color: '#ff7a6a' },
+  queue: { glyph: 'door', color: '#e0b65a' },
+  contracts: { glyph: 'scroll', color: '#ece6d6' },
+  noRetreat: { glyph: 'noRetreat', color: '#ff7a6a' },
+  advance: { glyph: 'coinFast', color: '#e0b65a' },
+  monster: { glyph: 'skull', color: '#c9a0ff' },
 };
 
 /** Значок категории (светлый на цветном круге; цвет круга — CATEGORY_COLORS). */
@@ -279,6 +291,16 @@ const GLYPHS: Record<GlyphId, (c: Ctx) => void> = {
     c.arc(0, 0.4, 0.46, 0, Math.PI * 2);
     c.fill();
   },
+  chain: (c) => {
+    // Два вытянутых звена цепи под углом.
+    c.rotate(-Math.PI / 4);
+    c.lineWidth = 0.2;
+    for (const x of [-0.33, 0.33]) {
+      c.beginPath();
+      c.ellipse(x, 0, 0.46, 0.24, 0, 0, Math.PI * 2);
+      c.stroke();
+    }
+  },
   potion: (c) => {
     // Круглый пузырёк с горлышком и пробкой.
     c.fillRect(-0.22, -0.95, 0.44, 0.18);
@@ -286,6 +308,75 @@ const GLYPHS: Record<GlyphId, (c: Ctx) => void> = {
     c.beginPath();
     c.arc(0, 0.3, 0.62, 0, Math.PI * 2);
     c.fill();
+  },
+  swords: (c) => {
+    // Два меча крест-накрест.
+    for (const a of [-Math.PI / 4, Math.PI / 4]) {
+      c.save();
+      c.rotate(a);
+      c.scale(0.85, 0.85);
+      GLYPHS.sword(c);
+      c.restore();
+    }
+  },
+  door: (c) => {
+    // Дверь с полукруглым верхом и ручкой.
+    c.lineWidth = 0.14;
+    c.beginPath();
+    c.moveTo(-0.5, 0.9);
+    c.lineTo(-0.5, -0.4);
+    c.arc(0, -0.4, 0.5, Math.PI, 0);
+    c.lineTo(0.5, 0.9);
+    c.closePath();
+    c.stroke();
+    c.beginPath();
+    c.arc(0.25, 0.2, 0.09, 0, Math.PI * 2);
+    c.fill();
+  },
+  scroll: (c) => {
+    // Свиток: лист с завитками сверху и снизу и строчками.
+    c.fillRect(-0.5, -0.75, 1, 1.5);
+    c.beginPath();
+    c.arc(-0.5, -0.75, 0.16, 0, Math.PI * 2);
+    c.arc(0.5, -0.75, 0.16, 0, Math.PI * 2);
+    c.fill();
+    c.beginPath();
+    c.arc(-0.5, 0.75, 0.16, 0, Math.PI * 2);
+    c.arc(0.5, 0.75, 0.16, 0, Math.PI * 2);
+    c.fill();
+    c.globalCompositeOperation = 'destination-out';
+    for (const y of [-0.35, 0, 0.35]) c.fillRect(-0.32, y - 0.05, 0.64, 0.1);
+    c.globalCompositeOperation = 'source-over';
+  },
+  noRetreat: (c) => {
+    // Стрелка назад, перечёркнутая.
+    c.lineWidth = 0.18;
+    c.beginPath();
+    c.moveTo(0.6, 0);
+    c.lineTo(-0.5, 0);
+    c.moveTo(-0.15, -0.38);
+    c.lineTo(-0.55, 0);
+    c.lineTo(-0.15, 0.38);
+    c.stroke();
+    c.lineWidth = 0.14;
+    c.beginPath();
+    c.arc(0, 0, 0.85, 0, Math.PI * 2);
+    c.moveTo(-0.6, -0.6);
+    c.lineTo(0.6, 0.6);
+    c.stroke();
+  },
+  coinFast: (c) => {
+    // Монета, летящая вперёд: круг и линии движения слева.
+    c.beginPath();
+    c.arc(0.25, 0, 0.55, 0, Math.PI * 2);
+    c.fill();
+    c.lineWidth = 0.12;
+    c.beginPath();
+    for (const y of [-0.3, 0, 0.3]) {
+      c.moveTo(-0.9, y);
+      c.lineTo(-0.45, y);
+    }
+    c.stroke();
   },
   bomb: (c) => {
     c.beginPath();

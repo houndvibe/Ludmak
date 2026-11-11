@@ -42,7 +42,8 @@ export type StepId =
   | 'battleStart'
   | 'fireBanned'
   | 'useActive'
-  | 'debt';
+  | 'parry'
+  | 'lives';
 
 export interface StepDef {
   id: StepId;
@@ -74,5 +75,6 @@ export const TUTORIAL_STEPS: StepDef[] = [
   { id: 'battleStart', scene: 'Battle', text: 'Предметы срабатывают сами. Следи за перезарядкой на иконках', action: false },
   { id: 'fireBanned', scene: 'Battle', text: 'Леший запретил огонь — против его врагов факел не работает', action: false },
   { id: 'useActive', scene: 'Battle', text: 'Нажми на предмет в рюкзаке, чтобы применить его', action: true },
-  { id: 'debt', scene: 'Results', text: 'Каждую ночь — платёж по долгу. Не хватит денег — конец', action: false },
+  { id: 'parry', scene: 'Battle', text: 'Враг замахнулся! Отбей мечом, пока кольцо не сошлось: наведи на летящий предмет ЛЕЗВИЕ — верхние две трети меча — и нажми. Рукоятью (нижняя треть) не отбить. Урон будет вдвое меньше', action: true },
+  { id: 'lives', scene: 'Results', text: 'У тебя 2 жизни. Смерть в бою отнимает жизнь и случайный предмет. Потеряешь обе — конец охоты', action: false },
 ];

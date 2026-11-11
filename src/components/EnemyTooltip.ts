@@ -6,12 +6,12 @@ import * as Phaser from 'phaser';
 import { ENEMY_TOOLTIP_LAYOUT, enemyItemKey, enemyKey } from '../config/assets';
 import { ENEMY_ITEM_STATS, ENEMY_STATS } from '../config/balance';
 import { ENEMIES, type EnemyId } from '../data/enemies';
-import { ENEMY_ITEMS, type EnemyItemDef } from '../data/enemyItems';
+import { ENEMY_CATEGORY_NAMES, ENEMY_ITEMS, type EnemyItemDef } from '../data/enemyItems';
 import { enemyName, modifierEffect, MODIFIERS, type ModifierId } from '../data/modifiers';
 import { rectMask, type Placement } from '../systems/backpack';
 import { enemyPower } from '../systems/battle';
 import { run } from '../state';
-import { addText, C, describeEnemyItem, fit, H, W } from '../ui';
+import { addChips, addModifierBadge, addText, C, enemyItemChips, fit, H, TITLE, W, withHoverTip } from '../ui';
 import { GridView } from './GridView';
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -51,16 +51,23 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
     let y = L.pad;
 
     // Имя по центру, под ним модификатор.
-    const name = addText(s, L.w / 2, y, enemyName(enemy, mod), 28, C.bad, { fontStyle: 'bold', align: 'center', wordWrap: { width: L.w - 2 * L.pad } });
+    const name = addText(s, L.w / 2, y, enemyName(enemy, mod), 28, C.bad, { ...TITLE, align: 'center', wordWrap: { width: L.w - 2 * L.pad } });
     this.add(name.setOrigin(0.5, 0));
     y += name.height + 6;
     if (mod) {
-      const m = addText(s, L.w / 2, y, `${MODIFIERS[mod].name}: ${modifierEffect(mod)}`, 18, C.accent, {
-        align: 'center',
-        wordWrap: { width: L.w - 2 * L.pad },
-      });
-      this.add(m.setOrigin(0.5, 0));
-      y += m.height + 6;
+      // Модификатор — плашка-тег (кружок с буквой и название), что он делает — в подсказке при наведении.
+      const M = MODIFIERS[mod];
+      const ph = 34;
+      const label = addText(s, 0, 0, M.name, 18, C.text, { fontStyle: 'bold' }).setOrigin(0, 0.5);
+      const pw = 8 + ph - 8 + 6 + label.width + 12;
+      const px = (L.w - pw) / 2;
+      const g = s.add.graphics();
+      g.fillStyle(0x14121a, 0.9).fillRoundedRect(px, y, pw, ph, ph / 2);
+      g.lineStyle(2, M.color, 1).strokeRoundedRect(px, y, pw, ph, ph / 2);
+      const hit = s.add.rectangle(px, y, pw, ph, 0xffffff, 0.001).setOrigin(0);
+      this.add([g, hit, addModifierBadge(s, px + 4 + (ph - 8) / 2, y + ph / 2, (ph - 8) / 2, mod), label.setPosition(px + ph + 2, y + ph / 2)]);
+      withHoverTip(hit, `${M.name}: ${modifierEffect(mod)}.`);
+      y += ph + 6;
     }
     y += 8;
 
@@ -81,8 +88,19 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
     const colX = L.pad + pw + L.colGap;
     const colW = L.w - L.pad - colX;
     this.add(addText(s, colX + colW / 2, bodyY, 'Сумка', 20, C.dim).setOrigin(0.5, 0));
-    const info = addText(s, L.pad, 0, '', 18, C.text, { wordWrap: { width: L.w - 2 * L.pad }, lineSpacing: 3 });
+    // Описание предмета внизу: «Вилы · Оружие» словами, характеристики — плашками с подсказками.
+    const info = s.add.container(0, 0);
     const hint = 'Наведи на предмет в сумке';
+    const showItem = (p: BagPiece | null) => {
+      info.removeAll(true);
+      if (!p) {
+        info.add(addText(s, L.pad, 0, hint, 18, C.dim));
+        return;
+      }
+      const head = addText(s, L.pad, 0, `${p.def.name} · ${ENEMY_CATEGORY_NAMES[p.def.category]}`, 20, C.text, { fontStyle: 'bold' });
+      info.add(head);
+      addChips(s, L.pad, head.height + 6, enemyItemChips(s, p.def.id, mod), { h: 32, maxW: L.w - 2 * L.pad, container: info });
+    };
     const pieces: BagPiece[] = def.bag.map((b, i) => ({
       uid: i,
       inGrid: true,
@@ -101,8 +119,11 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
       mode: 'view',
       items: () => pieces,
       shape: (p) => ({ w: p.def.w, h: p.def.h, key: enemyItemKey(p.def.id) }),
-      describe: (p) => `${p.def.name}: ${describeEnemyItem(p.def.id, mod)}`,
-      onHover: (t) => info.setText(t ?? hint).setColor(t ? C.text : C.dim),
+      describe: (p) => p.def.name,
+      // Мышь ушла с предмета — описание остаётся (окно не пропадает), чтобы можно было навести на плашки.
+      onHover: (_t, p) => {
+        if (p) showItem(p);
+      },
     });
     for (const p of pieces) grid.setCharges(p.uid, ENEMY_ITEM_STATS[p.def.id].charges ?? null);
     this.add(grid);
@@ -112,7 +133,8 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
     y = bodyY + Math.max(leftH, rightH) + 16;
     this.add(s.add.rectangle(L.pad, y, L.w - 2 * L.pad, 1, 0x4a4357).setOrigin(0));
     y += 12;
-    info.setY(y).setText(hint).setColor(C.dim);
+    info.setY(y);
+    showItem(null);
     this.add(info);
     const height = y + L.infoH + L.pad;
 

@@ -5,6 +5,7 @@
 import * as Phaser from 'phaser';
 import { fits, rotatedSize, type Mask, type Placement } from '../systems/backpack';
 import { FEEL } from '../config/feel';
+import { ICON_LINK_KEY } from '../config/assets';
 import { C, FONT } from '../ui';
 import { sfx } from './Sound';
 
@@ -22,6 +23,16 @@ export interface GridLabels {
   /** Сводка над самим перетаскиваемым: что он получит от соседей. */
   self: GridLabel[];
 }
+
+/** Связь соседства двух предметов на сетке (польза, вред или и то и другое). */
+export interface GridLink {
+  a: number;
+  b: number;
+  kind: 'good' | 'bad' | 'mixed';
+}
+
+/** Где предмет стоит на сетке, в клетках. */
+type CellRect = { col: number; row: number; w: number; h: number };
 
 export interface GridViewConfig<T extends Placement> {
   /** Левый верхний угол сетки на экране. */
@@ -43,7 +54,8 @@ export interface GridViewConfig<T extends Placement> {
   shape: (it: T) => { w: number; h: number; key: string; star?: number; frame?: number | null };
   /** Текст подсказки при наведении. */
   describe: (it: T) => string;
-  onHover?: (text: string | null) => void;
+  /** Наведение на предмет: текст describe и сам предмет; null — мышь ушла. */
+  onHover?: (text: string | null, item?: T | null) => void;
   /** 'battle': нажатие на предмет. */
   onClick?: (it: T) => void;
   /** 'edit': зона «вне сумок» (экранные координаты) и размер клетки в ней. */
@@ -64,6 +76,10 @@ export interface GridViewConfig<T extends Placement> {
   onLabels?: () => void;
   /** 'edit': страница зоны «вне сумок» или число страниц изменились (page с 0). */
   onStashPages?: (page: number, count: number) => void;
+  /** 'edit': связи перетаскиваемого предмета, если положить его сюда (превью полосок). */
+  previewLinks?: (it: T, col: number, row: number, rotated: boolean) => GridLink[];
+  /** Яркая подсветка связей предмета под курсором и затемнение остальных (рюкзак — да, бой — нет). */
+  linkHover?: boolean;
 }
 
 /** Один предмет на сетке: картинка, затемнение перезарядки, рамка готовности, заряды, уровень, метки. */
@@ -171,6 +187,13 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
   private stashPage = 0;
   private stashPages = 1;
   private pageOf = new Map<number, number>();
+  /** Связи соседства (от сцены), слой полосок и значки цепей. */
+  private links: GridLink[] = [];
+  private linkLayer: Phaser.GameObjects.Graphics;
+  private linkIcons: Phaser.GameObjects.Image[] = [];
+  /** Превью связей перетаскиваемого предмета и где он встанет. */
+  private previewLinks: GridLink[] = [];
+  private previewRect: CellRect | null = null;
 
   constructor(scene: Phaser.Scene, cfg: GridViewConfig<T>) {
     super(scene, cfg.x, cfg.y);
@@ -187,6 +210,8 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
       }
     }
     this.add(g);
+    this.linkLayer = scene.add.graphics();
+    this.add(this.linkLayer);
 
     for (const it of cfg.items()) {
       if (cfg.mode === 'edit' || it.inGrid) this.createPiece(it);
@@ -217,11 +242,13 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     p.img.on('pointerover', () => {
       this.hovered = it.uid;
       const cur = this.item(it.uid);
-      if (cur) this.cfg.onHover?.(this.cfg.describe(cur));
+      if (cur) this.cfg.onHover?.(this.cfg.describe(cur), cur);
+      if (this.cfg.linkHover) this.drawLinks();
     });
     p.img.on('pointerout', () => {
       if (this.hovered === it.uid) this.hovered = null;
       if (!this.dragging) this.cfg.onHover?.(null);
+      if (this.cfg.linkHover) this.drawLinks();
     });
     p.img.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
       const cur = this.item(it.uid);
@@ -284,6 +311,93 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     this.stashPage = Phaser.Math.Clamp(this.stashPage, 0, this.stashPages - 1);
     for (const [uid, pg] of this.pageOf) this.pieces.get(uid)?.cont.setVisible(pg === this.stashPage);
     this.cfg.onStashPages?.(this.stashPage, this.stashPages);
+    this.drawLinks();
+  }
+
+  // ─── Связи соседства ─────────────────────────────────────────────────────
+
+  /** Связи соседства при текущей раскладке (сцена пересчитывает их после каждого изменения). */
+  setLinks(links: GridLink[]): void {
+    this.links = links;
+    this.drawLinks();
+  }
+
+  /** Клетки предмета на сетке (null — не в сетке или его уже нет). */
+  private cellRect(uid: number): CellRect | null {
+    if (this.dragging?.uid === uid && this.previewRect) return this.previewRect;
+    const it = this.item(uid);
+    if (!it || !it.inGrid || this.dragging?.uid === uid) return null;
+    const s = this.cfg.shape(it);
+    const f = rotatedSize(s.w, s.h, it.rotated);
+    return { col: it.col, row: it.row, w: f.w, h: f.h };
+  }
+
+  /** Общие стороны двух предметов: отрезки [x1, y1, x2, y2] по границам касающихся клеток. */
+  private sharedEdges(a: CellRect, b: CellRect): [number, number, number, number][] {
+    const cell = this.cfg.cell;
+    const inB = (c: number, r: number) => c >= b.col && c < b.col + b.w && r >= b.row && r < b.row + b.h;
+    const out: [number, number, number, number][] = [];
+    for (let r = a.row; r < a.row + a.h; r++) {
+      for (let c = a.col; c < a.col + a.w; c++) {
+        const x = c * cell;
+        const y = r * cell;
+        if (inB(c + 1, r)) out.push([x + cell, y, x + cell, y + cell]);
+        if (inB(c - 1, r)) out.push([x, y, x, y + cell]);
+        if (inB(c, r + 1)) out.push([x, y + cell, x + cell, y + cell]);
+        if (inB(c, r - 1)) out.push([x, y, x + cell, y]);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Полоски связей: тонкие — все; у предмета под курсором (рюкзак) — яркие со значком цепи, остальные предметы тускнеют.
+   * Пока предмет тащат — вместо его связей превью ярких полосок там, где он встанет.
+   */
+  private drawLinks(): void {
+    const L = FEEL.links;
+    const g = this.linkLayer;
+    g.clear();
+    this.linkIcons.forEach((i) => i.destroy());
+    this.linkIcons = [];
+    const drag = this.dragging?.uid ?? null;
+    const focus = drag === null && this.cfg.linkHover ? this.hovered : null;
+    const focusLinks = focus === null ? [] : this.links.filter((l) => l.a === focus || l.b === focus);
+    // Тусклые — предметы в сетке, не связанные с тем, что под курсором.
+    const linked = new Set<number>(focusLinks.flatMap((l) => [l.a, l.b]));
+    for (const [uid, p] of this.pieces) {
+      if (p.removing || uid === drag) continue;
+      const dim = focusLinks.length > 0 && !linked.has(uid) && !!this.item(uid)?.inGrid;
+      p.cont.setAlpha(dim ? L.dimAlpha : 1);
+    }
+    const color = (k: GridLink['kind']) => (k === 'good' ? L.good : k === 'bad' ? L.bad : L.mixed);
+    const draw = (l: GridLink, bright: boolean) => {
+      const ra = this.cellRect(l.a);
+      const rb = this.cellRect(l.b);
+      if (!ra || !rb) return;
+      const segs = this.sharedEdges(ra, rb);
+      if (!segs.length) return;
+      g.lineStyle(bright ? L.thick : L.thin, color(l.kind), bright ? 1 : L.thinAlpha);
+      for (const [x1, y1, x2, y2] of segs) g.lineBetween(x1, y1, x2, y2);
+      if (!bright) return;
+      // Значок цепи — посередине общей границы.
+      const mx = segs.reduce((s, q) => s + (q[0] + q[2]) / 2, 0) / segs.length;
+      const my = segs.reduce((s, q) => s + (q[1] + q[3]) / 2, 0) / segs.length;
+      const icon = this.scene.add.image(mx, my, ICON_LINK_KEY).setDisplaySize(L.icon, L.icon).setTint(color(l.kind));
+      this.add(icon);
+      this.linkIcons.push(icon);
+    };
+    for (const l of this.links) {
+      if (drag !== null && (l.a === drag || l.b === drag)) continue;
+      draw(l, focus !== null && (l.a === focus || l.b === focus));
+    }
+    for (const l of this.previewLinks) draw(l, true);
+    this.bringToTop(g);
+    this.linkIcons.forEach((i) => this.bringToTop(i));
+    if (drag !== null) {
+      const p = this.pieces.get(drag);
+      if (p) this.bringToTop(p.cont);
+    }
   }
 
   /** Перелистнуть зону «вне сумок» на delta страниц. */
@@ -467,9 +581,17 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
   private drawPreview(): void {
     const g = this.preview!;
     g.clear();
-    if (!this.dragging) return this.showLabels(null);
+    this.previewLinks = [];
+    this.previewRect = null;
+    if (!this.dragging) {
+      this.drawLinks();
+      return this.showLabels(null);
+    }
     const it = this.item(this.dragging.uid)!;
-    if (!this.overGrid(it)) return this.showLabels(null);
+    if (!this.overGrid(it)) {
+      this.drawLinks();
+      return this.showLabels(null);
+    }
 
     const merge = this.mergeTarget(it);
     if (merge) {
@@ -478,6 +600,7 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
       g.fillStyle(0xe0b65a, 0.5);
       this.fillCells(g, merge.col, merge.row, f.w, f.h);
       this.showLabels({ neighbors: new Map([[merge.uid, [{ text: `Слияние → ★${(ms.star ?? 1) + 1}`, good: true }]]]), self: [] });
+      this.drawLinks();
       return;
     }
     const { col, row } = this.targetCell(it);
@@ -487,6 +610,12 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     g.fillStyle(ok ? 0x4caf50 : 0xe05050, 0.4);
     this.fillCells(g, col, row, f.w, f.h);
     this.showLabels(ok && this.cfg.preview ? this.cfg.preview(it, col, row, it.rotated) : null);
+    // Превью связей: где встанет предмет — яркие полоски с цепью.
+    if (ok && this.cfg.previewLinks) {
+      this.previewRect = { col, row, w: f.w, h: f.h };
+      this.previewLinks = this.cfg.previewLinks(it, col, row, it.rotated);
+    }
+    this.drawLinks();
   }
 
   private onMove(p: Phaser.Input.Pointer): void {
@@ -500,6 +629,8 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     const merge = this.overGrid(it) ? this.mergeTarget(it) : null;
     this.dragging = null;
     this.preview!.clear();
+    this.previewLinks = [];
+    this.previewRect = null;
     this.showLabels(null);
     if (merge) {
       Object.assign(it, { ...saved, uid: it.uid });

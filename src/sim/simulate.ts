@@ -9,19 +9,20 @@
 //
 // Эталонные сборки по ночам (REF): «осмысленная» — с позициями под соседство и с лечением;
 // «наивная» — те же предметы, разложенные случайно (в каждом прогоне заново), без учёта соседства.
-// Бюджет сборки к ночи n = стартовые монеты + Σ(доход − платёж − восполнение расходников) за прошлые ночи.
+// Бюджет сборки к ночи n = стартовые монеты + Σ(доход − восполнение расходников) за прошлые ночи.
+// Проигрыш забега — START_LIVES смертей; шанс пройти забег считается из шанса смерти в каждую ночь (ночи независимы).
 // Дополнительно: альтернативные сборки (щит, масло, мандрагора, проклятие) и «откуда урон» — урон по типам врагов
 // и здоровье героя на привалах.
 import {
-  DEBT_PAYMENTS,
+  BALANCE_PARRY_RATE,
   HERO_HP_BY_NIGHT,
   ITEM_STATS,
-  LEVEL_BY_NIGHT,
   NIGHTS,
   START_COINS,
   SHOP_SIZE,
   SHOP_TIER_WEIGHTS_BY_NIGHT,
   START_ITEMS,
+  START_LIVES,
 } from '../config/balance';
 import { CLIENT_IDS, CLIENTS, type ClientId } from '../data/clients';
 import { ENEMIES, ENEMY_IDS, type EnemyId } from '../data/enemies';
@@ -126,6 +127,8 @@ interface DayResult {
 /** Правила бота сверх базовых: отступить на привале, если здоровья меньше этой доли (null — не отступать). */
 interface BotRules {
   retreatBelow: number | null;
+  /** Доля атак врага, которые бот парирует (0..1), сразу при замахе. Нет поля — BALANCE_PARRY_RATE. */
+  parryRate?: number;
 }
 
 /** Учёт урона за много прогонов: по типам врагов, самоурон, лечение, здоровье на привалах. */
@@ -143,8 +146,9 @@ const newTrack = (): DamageTrack => ({ byEnemy: new Map(), self: 0, healed: 0, r
 /** Стоимость одного заряда предмета: цена всех вложенных копий / заряды на этом уровне. */
 const chargePrice = (id: ItemId, star: number) => (ITEM_STATS[id].price * 2 ** (star - 1)) / (maxCharges(id, star) ?? 1);
 
-function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng, rules?: BotRules, track?: DamageTrack): DayResult {
+function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng, rules?: BotRules, track?: DamageTrack, parryRng?: Rng): DayResult {
   const sim = new BattleSim({ items, chain: plan.chain, clients: plan.clients, night, rng });
+  const parryRate = rules?.parryRate ?? BALANCE_PARRY_RATE; // баланс — на «среднего игрока»
   let t = 0;
   let used = new Set<number>(); // какие небоевые расходники уже применены к текущему врагу
   let retreated = false;
@@ -193,6 +197,8 @@ function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng, rul
     }
     sim.step(DT);
     for (const e of sim.drain()) {
+      // Парирование: бот жмёт картинку сразу при замахе с вероятностью parryRate (своя случайность — бой не трогает).
+      if (e.type === 'windup' && parryRate > 0 && parryRng && parryRng() < parryRate) sim.parry(e.id);
       if (!track) continue;
       if (e.type === 'heroHit') {
         if (e.self) track.self += e.taken;
@@ -269,11 +275,12 @@ function simulate(
   let replacement = 0;
   let retreats = 0;
   let done = 0;
+  const parryRng = seeded(seed * 104729 + 3);
   for (let i = 0; i < RUNS; i++) {
     const p = plan(rng);
     // Свежие копии предметов: заряды в каждом прогоне свои.
     const items = naive ? packRandom(build, layoutRng) : fixed.map((it) => ({ ...it }));
-    const r = playDay(items, p, night, rng, rules, track);
+    const r = playDay(items, p, night, rng, rules, track, parryRng);
     if (r.won) wins++;
     hps.push((r.hp / HERO_HP_BY_NIGHT[night - 1]) * 100);
     income += r.income;
@@ -415,44 +422,44 @@ for (let n = 1; n <= NIGHTS; n++) {
   }
 }
 
+/**
+ * Шанс пройти забег: смертей меньше START_LIVES. deaths[n] — доля дней ночи n, закончившихся смертью (0..1).
+ * Ночи считаются независимыми; потеря предмета после смерти не учитывается.
+ */
+function runSurvival(deaths: number[]): number {
+  // dist[k] — вероятность k смертей к этому моменту (k ≥ START_LIVES — забег уже проигран, отдельно не ведём).
+  let dist = [1];
+  for (const p of deaths) {
+    const next = new Array(START_LIVES).fill(0);
+    dist.forEach((q, k) => {
+      next[k] += q * (1 - p);
+      if (k + 1 < START_LIVES) next[k + 1] += q * p;
+    });
+    dist = next;
+  }
+  return dist.reduce((s, q) => s + q, 0) * 100;
+}
+
 // ─── Экономика ───────────────────────────────────────────────────────────────
 
 console.log(`\n=== Экономика по ночам (осмысленная сборка, средние по ${RUNS} прогонам) ===`);
-console.log('    Доход — награды выполненных заказов минус неустойки (Кикимора — тоже доход: она гасит долг).');
-console.log('    Половина заказов — доход на один заказ × уровень / 2. Бюджет — сколько можно потратить на сборку к этой ночи.\n');
-console.log(
-  'Ночь  Доход  Половина  Платёж  Остаток  Восполн.  Свободно  Сборка(накоп.)  Бюджет  В бюджете  Покупки след. ночи  Половина: накоплено',
-);
+console.log('    Доход — награды выполненных заказов минус неустойки и возврат авансов. Бюджет — сколько можно потратить на сборку к этой ночи.\n');
+console.log('Ночь  Доход  Восполн.  Свободно  Сборка(накоп.)  Бюджет  В бюджете  Покупки след. ночи  Смерть');
 let budget = START_COINS;
-let halfBank = START_COINS;
-let halfBankRepl = START_COINS;
-let halfBroke: number | null = null;
-let halfBrokeRepl: number | null = null;
 for (let n = 1; n <= NIGHTS; n++) {
   const s = meaningful[n];
-  const pay = DEBT_PAYMENTS[n - 1];
-  const half = (s.incomePerContract * LEVEL_BY_NIGHT[n - 1]) / 2;
-  const after = s.income - pay;
-  const free = after - s.replacement;
+  const free = s.income - s.replacement;
   const c = cost(REF[n]);
   const next = n < NIGHTS ? cost(REF[n + 1]) - c : 0;
   const nextItems = n < NIGHTS ? REF[n + 1].length - REF[n].length : 0;
-  halfBank += half - pay;
-  halfBankRepl += half - pay - s.replacement / 2;
-  if (halfBank < 0 && halfBroke === null) halfBroke = n;
-  if (halfBankRepl < 0 && halfBrokeRepl === null) halfBrokeRepl = n;
   console.log(
-    `  ${n}   ${pad(s.income.toFixed(0), 4)}  ${pad(half.toFixed(0), 7)}  ${pad(pay, 6)}  ${pad(after.toFixed(0), 7)}  ${pad(s.replacement.toFixed(0), 8)}` +
-      `  ${pad(free.toFixed(0), 8)}  ${pad(c, 14)}  ${pad(budget.toFixed(0), 6)}  ${(c <= budget ? 'да' : 'НЕТ').padStart(9)}` +
-      `  ${pad(n < NIGHTS ? `${next} (${nextItems} шт.)` : '—', 18)}  ${pad(halfBank.toFixed(0), 8)} / ${pad(halfBankRepl.toFixed(0), 4)}`,
+    `  ${n}   ${pad(s.income.toFixed(0), 4)}  ${pad(s.replacement.toFixed(0), 8)}  ${pad(free.toFixed(0), 8)}  ${pad(c, 14)}  ${pad(budget.toFixed(0), 6)}` +
+      `  ${(c <= budget ? 'да' : 'НЕТ').padStart(9)}  ${pad(n < NIGHTS ? `${next} (${nextItems} шт.)` : '—', 18)}  ${pad((100 - s.wins).toFixed(0), 5)}%`,
   );
   budget += free;
 }
-console.log('\n    «Половина: накоплено» — монеты после платежа при половине заказов без покупок / с восполнением половины расходников.');
-console.log(
-  `    Половина заказов: долг не оплачен впервые в ночь ${halfBroke ?? '— (оплачивается все ночи)'} без покупок, ` +
-    `в ночь ${halfBrokeRepl ?? '— (оплачивается все ночи)'} с восполнением расходников.`,
-);
+const survive = runSurvival([1, 2, 3, 4, 5].map((n) => (100 - meaningful[n].wins) / 100));
+console.log(`\n    Шанс пройти забег (меньше ${START_LIVES} смертей за ${NIGHTS} ночей, ночи независимы): ${survive.toFixed(0)}%   цель — 50–60%`);
 
 // ─── Условия и модификаторы по отдельности ───────────────────────────────────
 // День из заказов одного заказчика (враги без модификаторов) или из врагов с одним модификатором
@@ -570,20 +577,31 @@ const policies: { name: string; take: (n: number) => number; rules?: BotRules }[
   { name: 'на 1 меньше + отступить при <25%', take: (n) => levelForNight(n) - 1, rules: { retreatBelow: 0.25 } },
 ];
 console.log(`=== Бот-игрок: эталонная сборка, разные правила (${RUNS} прогонов) ===`);
-console.log('    Ячейка: заказов выполнено в среднем / доход / смерть% / отступил%. Касса — монеты после платежа и восполнения, накопительно.\n');
-console.log(`  ${'Правило'.padEnd(36)}${[1, 2, 3, 4, 5].map((n) => `ночь ${n}`.padEnd(30)).join('')}Долг не оплачен`);
+console.log('    Ячейка: заказов выполнено в среднем / доход / смерть% / отступил%. Последний столбец — шанс пройти забег.\n');
+console.log(`  ${'Правило'.padEnd(36)}${[1, 2, 3, 4, 5].map((n) => `ночь ${n}`.padEnd(30)).join('')}Пройти забег`);
 for (const p of policies) {
-  let bank = START_COINS;
-  let broke: number | null = null;
+  const deaths: number[] = [];
   const cells: string[] = [];
   for (let n = 1; n <= NIGHTS; n++) {
     const r = simulate(n, REF[n], queueDay(n, p.take(n), REF[n]), false, 1, p.rules);
     const died = 100 - r.wins - r.retreats;
-    bank += r.income - DEBT_PAYMENTS[n - 1] - r.replacement;
-    if (bank < 0 && broke === null) broke = n;
+    deaths.push(died / 100);
     cells.push(`${r.done.toFixed(1)} / ${pad(r.income.toFixed(0), 3)} / ${pad(died.toFixed(0), 2)}% / ${pad(r.retreats.toFixed(0), 2)}%`.padEnd(30));
   }
-  console.log(`  ${p.name.padEnd(36)}${cells.join('')}${broke ? `ночь ${broke}` : 'нет'}`);
+  console.log(`  ${p.name.padEnd(36)}${cells.join('')}${runSurvival(deaths).toFixed(0)}%`);
+}
+
+// ─── Парирование ─────────────────────────────────────────────────────────────
+// Эталон, полный набор заказов. Бот парирует долю атак врага (сразу при замахе). Баланс ночей настроен на BALANCE_PARRY_RATE.
+
+console.log(`\n=== Парирование: эталонная сборка, полный набор заказов, ${RUNS} прогонов (побед / медиана здоровья, доход) ===\n`);
+console.log(`  ${'Парирует'.padEnd(12)}${[2, 3, 4, 5].map((n) => `ночь ${n}`.padEnd(24)).join('')}`);
+for (const rate of [0, 0.3, BALANCE_PARRY_RATE, 1]) {
+  const cells = [2, 3, 4, 5].map((n) => {
+    const r = simulate(n, REF[n], queueDay(n, undefined, REF[n]), false, 1, { retreatBelow: null, parryRate: rate });
+    return `${short(r)} / ${pad(r.income.toFixed(0), 3)}`.padEnd(24);
+  });
+  console.log(`  ${`${Math.round(rate * 100)}%`.padEnd(12)}${cells.join('')}`);
 }
 
 // ─── Магазин: шанс увидеть нужное ────────────────────────────────────────────

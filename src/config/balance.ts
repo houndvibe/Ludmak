@@ -5,16 +5,22 @@ import type { ClientId } from '../data/clients';
 import type { EnemyId } from '../data/enemies';
 import type { EnemyItemId } from '../data/enemyItems';
 
-// ─── Забег и долг ────────────────────────────────────────────────────────────
+// ─── Забег и жизни ───────────────────────────────────────────────────────────
 
 /** Сколько ночей в забеге. Пережил последнюю — победа. */
 export const NIGHTS = 5;
 
-/** Платёж по долгу в конце каждой ночи (индекс 0 = ночь 1). Не хватает — конец игры. */
-export const DEBT_PAYMENTS = [30, 60, 105, 150, 180]; // шаг 7 плана: было 30 / 50 / 80 / 120 / 180 — при половине заказов долг платился все ночи
+/**
+ * Жизни на весь забег. Смерть в бою отнимает 1 жизнь и 1 случайный предмет (и полную неустойку за незавершённые заказы).
+ * Жизней не осталось — конец игры. Было: платёж по долгу каждую ночь (30 / 60 / 105 / 150 / 180), не хватило — конец.
+ */
+export const START_LIVES = 2;
 
 /** Монеты на старте забега. */
-export const START_COINS = 20;
+export const START_COINS = 10; // было 20 — все деньги в игре поделены на 2
+
+/** Монеты на старте забега в дебаг-режиме (галочка в меню). */
+export const DEBUG_COINS = 999;
 
 /** Предметы на старте забега (кладутся в рюкзак автоматически). Можно оставить пустым. */
 export const START_ITEMS: ItemId[] = ['steel_sword'];
@@ -47,7 +53,7 @@ export const BACKPACK_MASK = [
 export const SHOP_SIZE = 5;
 
 /** Цена первого обновления ассортимента за ночь. */
-export const SHOP_REROLL_BASE = 2;
+export const SHOP_REROLL_BASE = 1; // было 2 (деньги ÷2)
 
 /** На сколько дорожает каждое следующее обновление в ту же ночь. Сбрасывается каждую ночь. */
 export const SHOP_REROLL_STEP = 1;
@@ -123,13 +129,13 @@ export const BOSS_ESCORT = 0;
  * Подобран симуляцией этапа 3б под эталонные сборки (было [1, 1.1, 1.2, 1.3, 1.4]).
  * Ночь 5 чуть ниже ночи 4: в ней четыре заказа подряд, включая ведьмака, без лечения между ними.
  */
-export const ENEMY_STAT_MULT_BY_NIGHT = [1, 1.13, 1.22, 1.65, 1.45]; // подобрано симуляцией после правок хлеба, подковы и размера заказов (шаг 6); до того — 1.14 / 1.5 / 1.45
+export const ENEMY_STAT_MULT_BY_NIGHT = [1.2, 1.66, 1.66, 2.06, 1.8]; // подобрано симуляцией под 60% парирований (BALANCE_PARRY_RATE); при 0% было 1 / 1.3 / 1.43 / 1.72 / 1.53
 
 /**
  * Награда = сумма «цены головы» врагов × множитель ночи × случайный разброс.
  * −10% по решению дизайнера, на глаз (было [1.2, 1.15, 1.2, 1.3, 1.4]).
  */
-export const REWARD_MULT_BY_NIGHT = [1.08, 1.035, 1.08, 1.17, 1.26];
+export const REWARD_MULT_BY_NIGHT = [0.54, 0.5175, 0.54, 0.585, 0.63]; // ×0,5: без долга деньги идут только в магазин; вместе с «ценой головы» ÷2 награды ÷4 (было 1.08 / 1.035 / 1.08 / 1.17 / 1.26)
 
 /** Разброс награды: ±10%. */
 export const REWARD_SPREAD = 0.1;
@@ -144,7 +150,7 @@ export const PENALTY_RATIO = 0.5;
 /**
  * Множитель награды заказа по заказчику. Нет записи — ×1.
  * Шаг 6 плана: у каждого условия своя цена или выгода. Упырь 1.4 → 1.5 (теперь ещё и выключает серебряную подкову),
- * Леший ×1.25 (за запрет Огня), Призрак ×0.85 (его условие облегчает бой), Кикимора ×1.25 (награда идёт в счёт долга).
+ * Леший ×1.25 (за запрет Огня), Призрак ×0.85 (его условие облегчает бой). Кикимора ×1: она платит авансом.
  */
 export const CLIENT_REWARD_MULT: Partial<Record<ClientId, number>> = {
   gul: 1.3,
@@ -152,11 +158,10 @@ export const CLIENT_REWARD_MULT: Partial<Record<ClientId, number>> = {
   vodyanoy: 1.5,
   leshy: 1.25,
   prizrak: 0.85,
-  kikimora: 1.25,
 };
 
 /** Множитель неустойки заказа по заказчику (Водяной). Нет записи — ×1. Шаг 6 плана: было 2 — риск без цены. */
-export const CLIENT_PENALTY_MULT: Partial<Record<ClientId, number>> = { vodyanoy: 3 };
+export const CLIENT_PENALTY_MULT: Partial<Record<ClientId, number>> = { vodyanoy: 3, kikimora: 2 }; // Кикимора: провал — вернуть аванс и неустойка ×2
 
 /** Призрак: первый удар героя по каждому врагу заказа умножается на это число. */
 export const GHOST_FIRST_HIT_MULT = 2;
@@ -173,18 +178,31 @@ export const GHOST_FIRST_HIT_MULT = 2;
 export interface EnemyStats {
   /** Здоровье на ночи 1 (дальше × ENEMY_STAT_MULT_BY_NIGHT). */
   hp: number;
-  /** «Цена головы» — вклад в награду заказа. */
+  /** «Цена головы» — вклад в награду заказа (поделена на 2 вместе со всеми деньгами). */
   bounty: number;
 }
 
 export const ENEMY_STATS: Record<EnemyId, EnemyStats> = {
-  krestyanin: { hp: 42, bounty: 20 }, // ночь 1 (npm run sim): только меч — победа на 16% здоровья, меч + лучшая покупка — 40%
-  strazhnik: { hp: 55, bounty: 30 },
-  razboynik: { hp: 40, bounty: 28 },
-  monakh: { hp: 50, bounty: 32 },
-  aristokrat: { hp: 60, bounty: 36 },
-  vedmak: { hp: 140, bounty: 90 }, // было hp 160
+  krestyanin: { hp: 42, bounty: 10 }, // ночь 1 (npm run sim): только меч — победа на 16% здоровья, меч + лучшая покупка — 40%
+  strazhnik: { hp: 55, bounty: 15 },
+  razboynik: { hp: 40, bounty: 14 },
+  monakh: { hp: 50, bounty: 16 },
+  aristokrat: { hp: 60, bounty: 18 },
+  vedmak: { hp: 140, bounty: 45 }, // было hp 160
 };
+
+/**
+ * Парирование: атака врага не бьёт сразу — появляется картинка предмета, и пока не закрылось окно (FEEL.parry.window),
+ * её можно нажать. Парированный удар наносит эту долю урона (потом остаток, как обычно, съедает блок) и не крадёт монеты.
+ * Баланс ночей настроен на BALANCE_PARRY_RATE парирований.
+ */
+export const PARRY_DAMAGE_MULT = 0.5;
+
+/**
+ * На какую долю парирований настроен баланс: бот симуляции парирует столько атак врага в основных таблицах
+ * (цели ночей, экономика, заказчики, модификаторы). 0.6 — «средний игрок»; было 0 (парирование как чистый бонус).
+ */
+export const BALANCE_PARRY_RATE = 0.6;
 
 /** Потолок блока врага (от ростового щита). Блок поглощает урон героя. */
 export const ENEMY_BLOCK_MAX = 20;
@@ -296,28 +314,29 @@ export interface ItemStats {
   selfDamageChance?: number;
 }
 
-// Цены по редкости (этап 3б, под доход по симуляции): редкость 1 — 8–18 (по карману в ночи 1–2),
+// Все цены поделены на 2 (было: хлеб 8, меч 16, кинжал 14, камень 18…); кинжал теперь дороже меча (компактнее и с Серебром),
+// камень — 6 (сам ничего не делает). Исходно: цены по редкости (этап 3б): редкость 1 — 8–18 (по карману в ночи 1–2),
 // редкость 2 — около 30, редкость 3 — около 60. Дорогие расходники к ночам 4–5 съедают часть дохода восполнением.
 export const ITEM_STATS: Record<ItemId, ItemStats> = {
   // Пассивные
-  steel_sword: { price: 16, cooldown: 1.5, damage: 6 },
-  silver_dagger: { price: 14, cooldown: 0.8, damage: 3 },
-  cursed_axe: { price: 60, cooldown: 3.0, damage: 15, selfDamage: 4, selfDamageChance: 0.25 },
-  wooden_shield: { price: 20, cooldown: 4.0, block: 5 }, // было 18 (cooldown 3, block 6 — ещё раньше): щит вместо подковы сильнее (ночь 3: 33% против 28%), теперь он дороже подковы
-  torch: { price: 14, cooldown: 4.0, damage: 7 },
-  bread: { price: 8, cooldown: 4.0, heal: 5, charges: 3 }, // съедается за 3 срабатывания (решение дизайнера); было cooldown 6 — таймер обнуляется с каждым врагом, и хлеб не успевал сработать
+  steel_sword: { price: 7, cooldown: 1.5, damage: 6 },
+  silver_dagger: { price: 8, cooldown: 0.8, damage: 3 },
+  cursed_axe: { price: 30, cooldown: 3.0, damage: 15, selfDamage: 4, selfDamageChance: 0.25 },
+  wooden_shield: { price: 10, cooldown: 4.0, block: 5 }, // было 18 (cooldown 3, block 6 — ещё раньше): щит вместо подковы сильнее (ночь 3: 33% против 28%), теперь он дороже подковы
+  torch: { price: 7, cooldown: 4.0, damage: 7 },
+  bread: { price: 4, cooldown: 4.0, heal: 5, charges: 3 }, // съедается за 3 срабатывания (решение дизайнера); было cooldown 6 — таймер обнуляется с каждым врагом, и хлеб не успевал сработать
   // Амулеты: главный эффект — аура на соседей (SYNERGY.horseshoeAura / boneAura).
-  silver_horseshoe: { price: 24 }, // своего действия в бою нет; было 34 — подкова проигрывала щиту (симуляция, ночь 3)
-  bone_amulet: { price: 28, cooldown: 10.0, selfDamage: 3 }, // раз в 10 с ранит героя на 3
+  silver_horseshoe: { price: 12 }, // своего действия в бою нет; было 34 — подкова проигрывала щиту (симуляция, ночь 3)
+  bone_amulet: { price: 14, cooldown: 10.0, selfDamage: 3 }, // раз в 10 с ранит героя на 3
   // Активные
-  bomb_grom: { price: 32, charges: 1, damage: 25, stun: 2 }, // было charges 2 — решение дизайнера
-  healing_elixir: { price: 28, charges: 1, heal: 30 }, // шаг 1 плана: было heal 22, цена 32 (charges 2 → 1 — решение дизайнера)
-  oil_vs_humans: { price: 30, charges: 1, weaponMult: 1.5, buffDuration: 8 }, // было ×2 на 10 с за 24: замена бомбы на масло давала ночь 5 — 95% побед против 61% у эталона
-  mandrake: { price: 44, charges: 1, stun: 4 },
+  bomb_grom: { price: 16, charges: 1, damage: 25, stun: 2 }, // было charges 2 — решение дизайнера
+  healing_elixir: { price: 14, charges: 1, heal: 30 }, // шаг 1 плана: было heal 22, цена 32 (charges 2 → 1 — решение дизайнера)
+  oil_vs_humans: { price: 15, charges: 1, weaponMult: 1.5, buffDuration: 8 }, // было ×2 на 10 с за 24: замена бомбы на масло давала ночь 5 — 95% побед против 61% у эталона
+  mandrake: { price: 22, charges: 1, stun: 4 },
   // Шаг 5 плана — новые предметы (числа на старте, подгоняются симуляцией).
-  whetstone: { price: 18 }, // своего действия нет; аура: соседнее Оружие (SYNERGY.whetstoneAura); было 12
-  rusty_sickle: { price: 16, cooldown: 1.2, damage: 5, selfDamage: 1, selfDamageChance: 0.25 }, // дешёвое Проклятие: открывает сборку с ладанкой; было selfDamage 2 / 20% — самоурон губил сборку
-  smoked_ham: { price: 20, cooldown: 4.0, heal: 6, charges: 3 }, // большая Еда: 18 лечения за жизнь (хлеб — 15), чаще срабатывает, но 2 клетки и боится Огня и Алхимии; было heal 8 × 4 — сильнее эталона на 18 пунктов
+  whetstone: { price: 6 }, // своего действия нет; аура: соседнее Оружие (SYNERGY.whetstoneAura); было 12
+  rusty_sickle: { price: 8, cooldown: 1.2, damage: 5, selfDamage: 1, selfDamageChance: 0.25 }, // дешёвое Проклятие: открывает сборку с ладанкой; было selfDamage 2 / 20% — самоурон губил сборку
+  smoked_ham: { price: 10, cooldown: 4.0, heal: 6, charges: 3 }, // большая Еда: 18 лечения за жизнь (хлеб — 15), чаще срабатывает, но 2 клетки и боится Огня и Алхимии; было heal 8 × 4 — сильнее эталона на 18 пунктов
 };
 
 // ─── Соседство ───────────────────────────────────────────────────────────────

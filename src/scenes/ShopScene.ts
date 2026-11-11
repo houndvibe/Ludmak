@@ -1,7 +1,7 @@
 // Магазин: 5 случайных предметов. Покупка — перетащить товар в «Твои вещи» (на такой же предмет — слияние), продажа — перетащить свою вещь к товарам. Обновление ассортимента.
 import * as Phaser from 'phaser';
 import { BG_NIGHT_KEY, itemKey, statIconKey, tagKey } from '../config/assets';
-import { ITEM_STATS } from '../config/balance';
+import { ITEM_STATS, SHOP_SIZE } from '../config/balance';
 import { FEEL } from '../config/feel';
 import { CLIENTS } from '../data/clients';
 import { ITEMS } from '../data/items';
@@ -25,6 +25,7 @@ import {
   itemTypeIcon,
   W,
   type StatChip,
+  TITLE,
 } from '../ui';
 
 /** Плашка на карточке: надпись, цвет обводки и значок. */
@@ -101,13 +102,17 @@ export class ShopScene extends Phaser.Scene {
     super('Shop');
   }
 
-  init(data: { page?: number }): void {
+  /** Страница товаров (больше одной бывает только в дебаге, где в магазине все предметы). */
+  private offersPage = 0;
+
+  init(data: { page?: number; offersPage?: number }): void {
     this.page = data.page ?? 0;
+    this.offersPage = data.offersPage ?? 0;
   }
 
-  /** Перерисовать экран, оставшись на той же странице вещей. */
+  /** Перерисовать экран, оставшись на тех же страницах. */
   private refresh(): void {
-    this.scene.restart({ page: this.page });
+    this.scene.restart({ page: this.page, offersPage: this.offersPage });
   }
 
   create(): void {
@@ -130,8 +135,12 @@ export class ShopScene extends Phaser.Scene {
       .setDepth(200)
       .setVisible(false);
 
-    run.shopOffers.forEach((id, i) => {
-      const x = CARDS_X + i * (CARD_W + CARD_GAP);
+    const offerPages = Math.ceil(run.shopOffers.length / SHOP_SIZE);
+    this.offersPage = Phaser.Math.Clamp(this.offersPage, 0, offerPages - 1);
+    const firstOffer = this.offersPage * SHOP_SIZE;
+    run.shopOffers.slice(firstOffer, firstOffer + SHOP_SIZE).forEach((id, local) => {
+      const i = firstOffer + local; // номер места в run.shopOffers (для buy / buyAndMerge)
+      const x = CARDS_X + local * (CARD_W + CARD_GAP);
       const cx = x + CARD_W / 2;
       const card = this.add.rectangle(x, CARDS_Y, CARD_W, CARD_H, C.panel, 0.92).setOrigin(0).setStrokeStyle(2, C.border);
       if (!id) {
@@ -152,7 +161,7 @@ export class ShopScene extends Phaser.Scene {
       this.addShape(x + CARD_W - CARD.pad, y + CARD.pad, def.w, def.h);
 
       const icon = fit(this.add.image(cx, y + CARD.iconY, itemKey(id)), CARD.iconSize, CARD.iconSize);
-      addText(this, cx, y + CARD.nameY, def.name, 26, C.text, { fontStyle: 'bold' }).setOrigin(0.5);
+      addText(this, cx, y + CARD.nameY, def.name, 28, C.text, TITLE).setOrigin(0.5);
 
       // Плашки — только теги (тип предмета — значок вверху). Место под них есть всегда, даже без тегов:
       // характеристики у всех карточек начинаются на одной высоте.
@@ -190,13 +199,23 @@ export class ShopScene extends Phaser.Scene {
         this.refresh();
       }).setEnabled(run.coins >= cost);
     }
+    // Дебаг: в магазине все предметы — листаются страницами (на месте кнопки обновления).
+    if (offerPages > 1) {
+      const turn = (d: number) => {
+        this.offersPage += d;
+        this.refresh();
+      };
+      new Button(this, MARGIN + 60, BTNS_Y, 100, BTN_H, '◀', () => turn(-1), 36).setEnabled(this.offersPage > 0);
+      new Button(this, MARGIN + BTN_W - 60, BTNS_Y, 100, BTN_H, '▶', () => turn(1), 36).setEnabled(this.offersPage < offerPages - 1);
+      addText(this, MARGIN + BTN_W / 2, BTNS_Y, `DEBUG · все предметы\nстр. ${this.offersPage + 1} из ${offerPages}`, 22, C.accent, { align: 'center' }).setOrigin(0.5);
+    }
     new Button(this, HOME_BTN.x, HOME_BTN.y, HOME_BTN.w, HOME_BTN.h, '← Домой', () => {
       tutorialDone(this, 'shopHome');
       goto(this, 'Home');
     }, 32);
 
     // Обучение: «купи» — ряд карточек и зона «Твои вещи», «домой» — кнопка «← Домой».
-    const offers = run.shopOffers.length;
+    const offers = Math.min(SHOP_SIZE, run.shopOffers.length);
     tutorialAttach(this, (id) => {
       if (id === 'buy') {
         // Ряд товаров и второе окно — «Твои вещи», куда тащить покупку.

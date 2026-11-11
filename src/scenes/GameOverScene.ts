@@ -1,10 +1,10 @@
-// Конец забега: победа (пережил все ночи) или поражение (не хватило на платёж).
+// Конец забега: победа (пережил все ночи) или поражение (кончились жизни).
 import * as Phaser from 'phaser';
 import { BG_NIGHT_KEY, HERO_KEY } from '../config/assets';
 import { NIGHTS } from '../config/balance';
 import { run } from '../state';
 import { playMusic, sfx } from '../components/Sound';
-import { addBackground, addText, Button, C, fadeIn, fit, goto } from '../ui';
+import { addBackground, addText, Button, C, TITLE, fadeIn, fit, goto } from '../ui';
 
 export class GameOverScene extends Phaser.Scene {
   constructor() {
@@ -21,10 +21,10 @@ export class GameOverScene extends Phaser.Scene {
     const hero = fit(this.add.image(1400, 540, HERO_KEY), 600, 750);
     if (!win) hero.setTint(0x777777);
 
-    addText(this, 160, 280, win ? 'Победа' : 'Конец игры', 110, win ? C.good : C.bad, { fontStyle: 'bold' });
+    addText(this, 160, 280, win ? 'Победа' : 'Конец игры', 110, win ? C.good : C.bad, TITLE);
     const text = win
-      ? `Людьмак пережил ${NIGHTS} ночей и выплатил долг.\nОсталось монет: ${s.coinsAfter}.`
-      : `Ночь ${s.night}: на платёж нужно ${s.payment}, а в кошельке было ${s.coinsAfterContracts}.\nКикимора забирает своё.`;
+      ? `Людьмак пережил ${NIGHTS} ночей.\nОсталось монет: ${s.coinsAfter}, жизней: ${s.livesAfter}.`
+      : `Ночь ${s.night}: Людьмак пал в бою во второй раз.\nЖизни кончились — охота окончена.`;
     addText(this, 160, 440, text, 34, C.text, { lineSpacing: 12, wordWrap: { width: 900 } });
     new Button(this, 360, 680, 400, 90, 'В меню', () => goto(this, 'Menu'), 36);
   }

@@ -46,6 +46,29 @@ export interface PowerResult {
   effects: AppliedEffect[];
 }
 
+/** Связь соседства между двумя предметами: все эффекты пары полезные, все вредные или есть и то и другое. */
+export interface PairLink {
+  a: number;
+  b: number;
+  kind: 'good' | 'bad' | 'mixed';
+}
+
+/** Эффекты соседства, сгруппированные по парам предметов (в обе стороны): одна связь на пару. */
+export function pairLinks(effects: AppliedEffect[]): PairLink[] {
+  const pairs = new Map<string, { a: number; b: number; good: boolean; bad: boolean }>();
+  for (const e of effects) {
+    if (e.source === e.target) continue;
+    const a = Math.min(e.source, e.target);
+    const b = Math.max(e.source, e.target);
+    const key = `${a}:${b}`;
+    const p = pairs.get(key) ?? { a, b, good: false, bad: false };
+    if (e.good) p.good = true;
+    else p.bad = true;
+    pairs.set(key, p);
+  }
+  return [...pairs.values()].map((p) => ({ a: p.a, b: p.b, kind: p.good && p.bad ? 'mixed' : p.good ? 'good' : 'bad' }));
+}
+
 export const starOf = (it: { star?: number }) => it.star ?? 1;
 
 /** Максимум зарядов предмета на этом уровне (undefined — у предмета нет зарядов). */

@@ -1,7 +1,22 @@
 // Общие элементы интерфейса: текст, кнопки, шапка, фон, подписи предметов.
 import * as Phaser from 'phaser';
-import { DEBT_PAYMENTS, ENEMY_ITEM_STATS, ITEM_STATS, NIGHTS, type ItemStats } from './config/balance';
-import { BG_HORSE_KEY, categoryKey, HEADER_LAYOUT, HORSE_ART, type StatIconId } from './config/assets';
+import { CLIENT_PENALTY_MULT, CLIENT_REWARD_MULT, ENEMY_ITEM_STATS, GHOST_FIRST_HIT_MULT, ITEM_STATS, NIGHTS, START_LIVES, type ItemStats } from './config/balance';
+import {
+  BG_HORSE_KEY,
+  categoryKey,
+  HEADER_LAYOUT,
+  HORSE_ART,
+  itemKey,
+  statIconKey,
+  tagKey,
+  UI_ART,
+  UI_HEADER_KEY,
+  uiButtonKey,
+  uiIconKey,
+  type ButtonState,
+  type StatIconId,
+} from './config/assets';
+import { CLIENTS, type ClientId } from './data/clients';
 import { FEEL } from './config/feel';
 import { getVolume, isMuted, setVolume, sfx, toggleMute } from './components/Sound';
 import { ENEMIES, type EnemyId } from './data/enemies';
@@ -17,7 +32,11 @@ import type { EnemyTooltip } from './components/EnemyTooltip';
 
 export const W = 1920;
 export const H = 1080;
-export const FONT = 'Arial, Helvetica, sans-serif';
+/** Основной текст — PT Serif (хорошо читается мелко); заголовки, имена и кнопки — Kurale. Файлы — FONT_FILES в assets.ts. */
+export const FONT = "'PT Serif', Georgia, serif";
+export const FONT_TITLE = "Kurale, 'PT Serif', Georgia, serif";
+/** Стиль заголовка для addText: Kurale без жирного (у шрифта нет жирного начертания). */
+export const TITLE = { fontFamily: FONT_TITLE, fontStyle: 'normal' } as const;
 
 export const C = {
   panel: 0x231f2b,
@@ -35,6 +54,8 @@ export const C = {
   ink: '#2b1d12',
   inkAccent: '#6b2a10',
   inkDim: '#5c4a38',
+  inkGood: '#2f6418',
+  inkBad: '#8e1c14',
 };
 
 /** Цвет рамки редкости (карточка в магазине, клетки в инвентаре). У редкости 1 рамки нет. */
@@ -58,10 +79,16 @@ export function addText(
   return scene.add.text(x, y, str, { fontFamily: FONT, fontSize: `${size}px`, color, ...style });
 }
 
+/**
+ * Кнопка. Если художница нарисовала плашку (UI_ART), фон — её картинка с неподвижными углами (три состояния:
+ * обычная, наведена, неактивна); иначе — прямоугольник, нарисованный кодом.
+ */
 export class Button extends Phaser.GameObjects.Container {
   private bg: Phaser.GameObjects.Rectangle;
+  private plates: Partial<Record<ButtonState, Phaser.GameObjects.NineSlice>> = {};
   private label: Phaser.GameObjects.Text;
   private enabled = true;
+  private hovered = false;
 
   constructor(
     scene: Phaser.Scene,
@@ -74,16 +101,36 @@ export class Button extends Phaser.GameObjects.Container {
     size = 28,
   ) {
     super(scene, x, y);
-    this.bg = scene.add.rectangle(0, 0, w, h, C.btn).setStrokeStyle(2, C.border);
-    this.label = addText(scene, 0, 0, text, size).setOrigin(0.5);
-    this.add([this.bg, this.label]);
+    const art = scene.textures.exists(uiButtonKey('normal'));
+    // Без картинки — видимый прямоугольник; с картинкой — невидимая зона нажатия под плашками.
+    this.bg = art ? scene.add.rectangle(0, 0, w, h, 0xffffff, 0.001) : scene.add.rectangle(0, 0, w, h, C.btn).setStrokeStyle(2, C.border);
+    this.add(this.bg);
+    if (art) {
+      // Плашка растягивается до w×h с неподвижными углами: тянем её в масштабе высоты buttonHeight, затем уменьшаем.
+      const H = UI_ART.buttonHeight;
+      const k = h / H;
+      for (const s of ['normal', 'hover', 'disabled'] as ButtonState[]) {
+        const key = scene.textures.exists(uiButtonKey(s)) ? uiButtonKey(s) : uiButtonKey('normal');
+        const sx = Math.round(H * UI_ART.slice.x);
+        const sy = Math.round(H * UI_ART.slice.y);
+        const plate = scene.add.nineslice(0, 0, key, undefined, Math.max(w / k, sx * 2 + 2), H, sx, sx, sy, sy).setScale(k);
+        this.plates[s] = plate;
+        this.add(plate);
+      }
+    }
+    this.label = addText(scene, 0, 0, text, size, C.text, { ...TITLE, stroke: '#000000', strokeThickness: art ? 4 : 0 }).setOrigin(0.5);
+    this.add(this.label);
+    this.showState();
     this.bg.setInteractive({ useHandCursor: true });
     this.bg.on('pointerover', () => {
-      if (!this.enabled) return;
-      this.bg.setFillStyle(C.btnHover);
-      sfx(scene, 'ui_hover');
+      this.hovered = true;
+      this.showState();
+      if (this.enabled) sfx(scene, 'ui_hover');
     });
-    this.bg.on('pointerout', () => this.bg.setFillStyle(this.enabled ? C.btn : C.btnOff));
+    this.bg.on('pointerout', () => {
+      this.hovered = false;
+      this.showState();
+    });
     this.bg.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (!this.enabled || p.button !== 0) return;
       sfx(scene, 'ui_click');
@@ -94,9 +141,19 @@ export class Button extends Phaser.GameObjects.Container {
 
   setEnabled(v: boolean): this {
     this.enabled = v;
-    this.bg.setFillStyle(v ? C.btn : C.btnOff);
     this.label.setColor(v ? C.text : C.dim);
+    this.showState();
     return this;
+  }
+
+  /** Фон по состоянию: неактивна, наведена или обычная. */
+  private showState(): void {
+    const state: ButtonState = !this.enabled ? 'disabled' : this.hovered ? 'hover' : 'normal';
+    if (this.plates.normal) {
+      for (const [s, p] of Object.entries(this.plates)) p!.setVisible(s === state);
+    } else {
+      this.bg.setFillStyle(state === 'disabled' ? C.btnOff : state === 'hover' ? C.btnHover : C.btn);
+    }
   }
 
   setLabel(text: string): this {
@@ -208,16 +265,78 @@ export function addHorse(scene: Phaser.Scene, gridX: number, gridY: number, cell
   return scene.add.image(gridX - HORSE_ART.gridX * k, gridY - HORSE_ART.gridY * k, BG_HORSE_KEY).setOrigin(0).setScale(k);
 }
 
-/** Верхняя полоса: ночь, заголовок, монеты и платёж, кнопка «Без звука». */
-export function addHeader(scene: Phaser.Scene, title: string): void {
-  scene.add.rectangle(0, 0, W, 80, 0x000000, 0.6).setOrigin(0);
+/** Жизни сердечками: ♥ — есть, ♡ — потеряна. */
+export function livesText(lives = run.lives): string {
+  return '♥'.repeat(Math.max(0, lives)) + '♡'.repeat(Math.max(0, START_LIVES - lives));
+}
+
+/** Размеры значков в шапке (px). */
+const HEART_PX = 46;
+const COIN_PX = 38;
+
+/**
+ * Жизни у правого края (x — правый край, y — центр): картинки целого и разбитого сердца художницы,
+ * без картинок — текстом ♥♡. Возвращает ширину и обновление.
+ */
+export function addLives(scene: Phaser.Scene, x: number, y: number): { width: () => number; refresh: () => void } {
+  if (!scene.textures.exists(uiIconKey('heart_full'))) {
+    const t = addText(scene, x, y, livesText(), 34, C.bad, { fontStyle: 'bold' }).setOrigin(1, 0.5);
+    return { width: () => t.width, refresh: () => t.setText(livesText()) };
+  }
+  const gap = 6;
+  const hearts: Phaser.GameObjects.Image[] = [];
+  for (let i = 0; i < START_LIVES; i++) {
+    // Слева направо: сначала целые, потом разбитые (как ♥♥♡).
+    const cx = x - (START_LIVES - 1 - i) * (HEART_PX + gap) - HEART_PX / 2;
+    hearts.push(scene.add.image(cx, y, uiIconKey('heart_full')));
+  }
+  const refresh = () =>
+    hearts.forEach((h, i) => {
+      const broken = i >= run.lives && scene.textures.exists(uiIconKey('heart_broken'));
+      h.setTexture(uiIconKey(broken ? 'heart_broken' : 'heart_full'));
+      h.setScale(HEART_PX / h.height);
+      h.setAlpha(i >= run.lives && !broken ? 0.3 : 1);
+    });
+  refresh();
+  return { width: () => START_LIVES * HEART_PX + (START_LIVES - 1) * gap, refresh };
+}
+
+/**
+ * Жизни у правого края полосы (x — правый край, y — центр) и монеты левее: значок монеты и число
+ * (без картинки — «Монеты: N»). Возвращает функцию обновления (монеты меняются, например, от аванса Кикиморы).
+ */
+export function addCoinsAndLives(scene: Phaser.Scene, x: number, y: number): () => void {
+  const lives = addLives(scene, x, y);
+  const art = scene.textures.exists(uiIconKey('coin'));
+  const coins = addText(scene, 0, y, '', art ? 32 : 28, C.accent, art ? { fontStyle: 'bold', stroke: '#000000', strokeThickness: 4 } : {}).setOrigin(1, 0.5);
+  const icon = art ? scene.add.image(0, y, uiIconKey('coin')) : null;
+  icon?.setScale(COIN_PX / icon.height);
+  const refresh = () => {
+    lives.refresh();
+    coins.setText(art ? `${run.coins}` : `Монеты: ${run.coins}`).setX(x - lives.width() - 30);
+    icon?.setX(coins.x - coins.width - 8 - COIN_PX / 2);
+  };
+  refresh();
+  return refresh;
+}
+
+/** Фон верхней полосы 80 px: балка художницы (повторяется по ширине), без картинки — тёмная полоса. */
+export function addTopBar(scene: Phaser.Scene): void {
+  if (scene.textures.exists(UI_HEADER_KEY)) {
+    const k = 80 / UI_ART.header.band.h;
+    scene.add.tileSprite(0, 0, W, 80, UI_HEADER_KEY).setOrigin(0).setTileScale(k, k);
+  } else {
+    scene.add.rectangle(0, 0, W, 80, 0x000000, 0.6).setOrigin(0);
+  }
+}
+
+/** Верхняя полоса: ночь, заголовок, монеты и жизни, кнопка «Без звука». Возвращает обновление монет и жизней. */
+export function addHeader(scene: Phaser.Scene, title: string): () => void {
+  addTopBar(scene);
   addMuteButton(scene, HEADER_LAYOUT.mute);
   addText(scene, 30, 40, `Ночь ${run.night} / ${NIGHTS}    Уровень ${heroLevel()}`, 30).setOrigin(0, 0.5);
-  addText(scene, W / 2, 40, title, 36).setOrigin(0.5);
-  addText(scene, W - 30, 40, `Монеты: ${run.coins}    Платёж этой ночью: ${DEBT_PAYMENTS[run.night - 1]}`, 28, C.accent).setOrigin(
-    1,
-    0.5,
-  );
+  addText(scene, W / 2, 40, title, 38, C.text, TITLE).setOrigin(0.5);
+  return addCoinsAndLives(scene, W - 30, 40);
 }
 
 const num = (n: number) => (Number.isInteger(n) ? `${n}` : n.toFixed(1));
@@ -296,6 +415,188 @@ export function itemStatChips(id: ItemId, s: ItemStats = ITEM_STATS[id], charges
     const n = charges ?? s.charges;
     out.push({ icon: 'charges', value: `${n}`, hint: `Сработает ${n} раз — потом предмет исчезнет` });
   }
+  return out;
+}
+
+// ─── Плашки-значки с подсказкой (карточка заказа, доска, окно врага) ─────────
+
+/** Плашка: значок (ключ текстуры), второй значок, короткое значение и его цвет; hint — полная фраза при наведении. */
+export interface UiChip {
+  icon: string;
+  icon2?: string;
+  value?: string;
+  color?: string;
+  hint: string;
+  /** Перечеркнуть значок красным (запрет). */
+  cross?: boolean;
+}
+
+const tips = new WeakMap<Phaser.Scene, Phaser.GameObjects.Text>();
+
+/** Одна подсказка на сцену: тёмная плашка с текстом над объектом. */
+function hoverTip(scene: Phaser.Scene): Phaser.GameObjects.Text {
+  let t = tips.get(scene);
+  if (!t || !t.scene) {
+    t = addText(scene, 0, 0, '', 20, C.text, {
+      backgroundColor: 'rgba(20,18,26,0.95)',
+      padding: { x: 12, y: 8 },
+      wordWrap: { width: 440 },
+      lineSpacing: 3,
+    })
+      .setOrigin(0.5, 1)
+      .setDepth(1000)
+      .setVisible(false);
+    tips.set(scene, t);
+  }
+  return t;
+}
+
+/** При наведении на объект — подсказка над ним (полная фраза). */
+export function withHoverTip<T extends Phaser.GameObjects.GameObject & { getBounds: () => Phaser.Geom.Rectangle }>(obj: T, hint: string): T {
+  obj.setInteractive();
+  obj.on('pointerover', () => {
+    const tip = hoverTip(obj.scene);
+    const b = obj.getBounds();
+    tip.setText(hint);
+    const half = tip.width / 2 + 10;
+    tip.setPosition(Phaser.Math.Clamp(b.centerX, half, W - half), b.top - 6).setVisible(true);
+    if (tip.y - tip.height < 4) tip.setOrigin(0.5, 0).setY(b.bottom + 6);
+    else tip.setOrigin(0.5, 1);
+  });
+  obj.on('pointerout', () => hoverTip(obj.scene).setVisible(false));
+  obj.once(Phaser.GameObjects.Events.DESTROY, () => tips.get(obj.scene)?.setVisible(false));
+  return obj;
+}
+
+/** Ключ значка монеты: монета художницы, без неё — значок зарядов. */
+export function coinIconKey(scene: Phaser.Scene): string {
+  return scene.textures.exists(uiIconKey('coin')) ? uiIconKey('coin') : statIconKey('charges');
+}
+
+/**
+ * Плашки слева направо с переносом по ширине maxW. Возвращает размер занятого места.
+ * h — высота плашки; bg — цвет подложки (по умолчанию тёмная, для пергамента и для тёмной доски).
+ */
+export function addChips(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  chips: UiChip[],
+  o: { h?: number; font?: number; maxW?: number; gap?: number; bg?: number; bgAlpha?: number; container?: Phaser.GameObjects.Container } = {},
+): { w: number; h: number } {
+  const h = o.h ?? 34;
+  const font = o.font ?? Math.round(h * 0.6);
+  const gap = o.gap ?? 6;
+  const icon = Math.round(h * 0.78);
+  const maxW = o.maxW ?? W;
+  const add = <T extends Phaser.GameObjects.GameObject>(g: T) => {
+    o.container?.add(g);
+    return g;
+  };
+  let cx = x;
+  let top = y;
+  let widest = 0;
+  for (const ch of chips) {
+    const t = ch.value ? addText(scene, 0, 0, ch.value, font, ch.color ?? C.text, { fontStyle: 'bold' }).setOrigin(0, 0.5) : null;
+    const w = 6 + icon + (ch.icon2 ? icon + 3 : 0) + (t ? 5 + t.width : 0) + 7;
+    if (cx > x && cx + w > x + maxW) {
+      cx = x;
+      top += h + gap;
+    }
+    const mid = top + h / 2;
+    const bg = add(scene.add.rectangle(cx, top, w, h, o.bg ?? 0x1a1410, o.bgAlpha ?? 0.85).setOrigin(0));
+    let ix = cx + 6;
+    for (const key of [ch.icon, ch.icon2]) {
+      if (!key) continue;
+      add(fit(scene.add.image(ix + icon / 2, mid, key), icon, icon));
+      if (ch.cross) {
+        // Запрет: красная черта по диагонали значка.
+        const g = add(scene.add.graphics());
+        g.lineStyle(Math.max(3, h * 0.1), 0xe04040, 1).lineBetween(ix + 2, top + 4, ix + icon - 2, top + h - 4);
+      }
+      ix += icon + 3;
+    }
+    if (t) add(t.setPosition(ix + 2, mid));
+    withHoverTip(bg, ch.hint);
+    cx += w + gap;
+    widest = Math.max(widest, cx - gap - x);
+  }
+  return { w: widest, h: chips.length ? top + h - y : 0 };
+}
+
+const fmtMult = (x: number) => `×${String(x).replace('.', ',')}`;
+
+/**
+ * Условие заказчика плашками: запрет (перечёркнутый значок), первый удар, нельзя отступать, аванс,
+ * множители награды и неустойки. battleOnly — только то, что важно для сборки и боя (доска).
+ */
+export function conditionChips(scene: Phaser.Scene, id: ClientId, battleOnly = false): UiChip[] {
+  const c = CLIENTS[id].condition;
+  const out: UiChip[] = [];
+  for (const s of c.ban ?? []) {
+    const icon = s.tag ? tagKey(s.tag) : s.item ? itemKey(s.item) : s.category ? categoryKey(s.category) : statIconKey('damage');
+    const text = c.banText ? c.banText[0].toUpperCase() + c.banText.slice(1) : 'Запрет';
+    out.push({ icon, cross: true, hint: `${text} — в бою с врагами этого заказа (как отключённые соседством).` });
+  }
+  if (c.firstHitBonus) {
+    out.push({
+      icon: statIconKey('damage'),
+      value: fmtMult(GHOST_FIRST_HIT_MULT),
+      color: C.good,
+      hint: `Первый удар по каждому врагу этого заказа ${fmtMult(GHOST_FIRST_HIT_MULT)}.`,
+    });
+  }
+  if (c.noRetreat) out.push({ icon: statIconKey('noRetreat'), hint: 'Нельзя отступить на привале, пока этот заказ не выполнен.' });
+  if (battleOnly) return out;
+  const penalty = CLIENT_PENALTY_MULT[id];
+  if (c.advance) {
+    out.push({
+      icon: statIconKey('advance'),
+      hint: `Аванс: награда сразу, как только примешь заказ. Провал — вернуть аванс${penalty ? ` и неустойка ${fmtMult(penalty)}` : ''}.`,
+    });
+  }
+  const reward = CLIENT_REWARD_MULT[id];
+  if (reward) out.push({ icon: coinIconKey(scene), value: fmtMult(reward), color: reward >= 1 ? C.good : C.bad, hint: `Награда ${fmtMult(reward)} (уже в числе награды).` });
+  if (penalty && !c.advance) out.push({ icon: coinIconKey(scene), value: fmtMult(penalty), color: C.bad, hint: `Неустойка ${fmtMult(penalty)} (уже в числе неустойки).` });
+  return out;
+}
+
+/** Предмет врага плашками: урон (и по монстру), блок, лечение (порог), перезарядка или замах, заряды, кража. */
+export function enemyItemChips(scene: Phaser.Scene, id: EnemyItemId, mod: ModifierId | null = null): UiChip[] {
+  const d = ENEMY_ITEMS[id];
+  const s = ENEMY_ITEM_STATS[id];
+  const m = enemyPower(run.night, mod);
+  const out: UiChip[] = [];
+  if (s.damage) {
+    const dmg = Math.round(s.damage * m * enemyDamageMult(mod));
+    out.push({ icon: statIconKey('damage'), value: `${dmg}`, hint: `Урон по герою: ${dmg}` });
+    if (s.monsterMult) {
+      out.push({ icon: statIconKey('monster'), value: fmtMult(s.monsterMult), color: C.bad, hint: `По монстру урон ${fmtMult(s.monsterMult)} — Людьмак ведь монстр.` });
+    }
+  }
+  if (s.block) out.push({ icon: statIconKey('block'), value: `${Math.round(s.block * m)}`, hint: `Блок: ${Math.round(s.block * m)} (поглощает удары героя)` });
+  if (s.heal) {
+    const pct = s.healBelow ? Math.round(s.healBelow * 100) : 0;
+    out.push({
+      icon: statIconKey('heal'),
+      value: `${Math.round(s.heal * m)}${pct ? ` · <${pct}%` : ''}`,
+      hint: `Лечит себя на ${Math.round(s.heal * m)}${pct ? `, когда здоровье ниже ${pct}%` : ''}.`,
+    });
+  }
+  if (s.stealCoins) {
+    out.push({ icon: coinIconKey(scene), value: `−${s.stealCoins}`, color: C.bad, hint: `Крадёт ${s.stealCoins} мон. из награды при каждом ударе.` });
+  }
+  if (s.cooldown) {
+    out.push({
+      icon: statIconKey('cooldown'),
+      value: `${s.cooldown} с`,
+      hint:
+        d.mode === 'passive'
+          ? `Срабатывает сам раз в ${s.cooldown} с.`
+          : `Замах ${s.cooldown} с перед ударом. Удар с уроном можно парировать, пока сжимается кольцо.`,
+    });
+  }
+  if (s.charges) out.push({ icon: statIconKey('charges'), value: `${s.charges}`, hint: `Зарядов: ${s.charges} — кончатся, предмет больше не используется.` });
   return out;
 }
 
@@ -387,6 +688,9 @@ export function addEnemyLines(
   tooltip: EnemyTooltip,
   size = 24,
   container?: Phaser.GameObjects.Container,
+  colors: { text: string; accent: string } = { text: C.text, accent: C.accent },
+  /** Ширина, в которую должна влезть строка (вместе с кружком модификатора): длинное имя — мельче шрифт. */
+  maxW = Infinity,
 ): number {
   // Одинаковые враги с одинаковым модификатором — одной строкой «×N».
   const groups = new Map<string, { e: EnemyId; mod: ModifierId | null; n: number }>();
@@ -399,15 +703,21 @@ export function addEnemyLines(
   });
   const lh = size + 10;
   [...groups.values()].forEach(({ e, mod, n }, i) => {
-    const t = addText(scene, x, y + i * lh, `• ${enemyName(e, mod)}${n > 1 ? ` ×${n}` : ''}`, size, mod ? C.accent : C.text);
+    // С модификатором — перед именем кружок с буквой (как на портрете в бою), без него — точка.
+    const r = Math.round(size * 0.42);
+    const tx = mod ? x + 2 * r + 6 : x;
+    const label = `${mod ? '' : '• '}${enemyName(e, mod)}${n > 1 ? ` ×${n}` : ''}`;
+    const t = addText(scene, tx, y + i * lh, label, size, mod ? colors.accent : colors.text);
+    for (let s = size - 1; tx - x + t.width > maxW && s >= 14; s--) t.setFontSize(s);
+    if (mod) container?.add(addModifierBadge(scene, x + r, t.y + t.height / 2, r, mod));
     t.setInteractive({ useHandCursor: true });
     t.on('pointerover', () => {
-      t.setColor(C.accent);
+      t.setColor(colors.accent);
       const b = t.getBounds();
       tooltip.show(e, mod, { x: b.x, y: b.y, w: b.width, h: b.height });
     });
     // Окно само прячется, когда мышь уйдёт и со строки, и с окна (чтобы можно было навести на предметы в сумке).
-    t.on('pointerout', () => t.setColor(mod ? C.accent : C.text));
+    t.on('pointerout', () => t.setColor(mod ? colors.accent : colors.text));
     container?.add(t);
   });
   return groups.size * lh;

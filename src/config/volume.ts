@@ -38,6 +38,9 @@ export const SOUND_VOLUME: Record<SoundKey, number> = {
   // Бой — удары и блок звучат каждую секунду
   hit_hero: 1,
   hit_enemy: 1,
+  /** Удар клинком героя (меч, кинжал, топор, серп) — вместо hit_enemy. */
+  sword_hit: 1,
+  parry: 1,
   block: 1,
   heal: 1,
   self_damage: 1,
@@ -53,7 +56,6 @@ export const SOUND_VOLUME: Record<SoundKey, number> = {
 
   // Итоги и конец забега
   coins: 1,
-  debt_paid: 1,
   level_up: 1,
   game_over: 1,
   victory: 1,

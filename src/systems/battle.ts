@@ -12,17 +12,19 @@ import {
   GHOST_FIRST_HIT_MULT,
   HERO_HP_BY_NIGHT,
   MODIFIER_STATS,
+  PARRY_DAMAGE_MULT,
   type EnemyItemStats,
   type ItemStats,
 } from '../config/balance';
 import { CLIENTS, type ClientCondition, type ClientId } from '../data/clients';
 import { ENEMIES, type EnemyId } from '../data/enemies';
-import { ENEMY_ITEMS, type EnemyItemDef } from '../data/enemyItems';
-import { ITEMS, type ItemDef } from '../data/items';
+import { ENEMY_ITEMS, type EnemyItemDef, type EnemyItemId } from '../data/enemyItems';
+import { FEEL } from '../config/feel';
+import { ITEMS, type ItemDef, type ItemId } from '../data/items';
 import { enemyName, type ModifierId } from '../data/modifiers';
 import type { OwnedItem, Placement } from './backpack';
 import type { Rng } from './random';
-import { computePower, matches, type BlockRule, type ItemPower } from './synergy';
+import { computePower, matches, type AppliedEffect, type BlockRule, type ItemPower } from './synergy';
 
 export interface ChainLink {
   enemy: EnemyId;
@@ -93,7 +95,7 @@ export type BattleEvent =
   | { type: 'enemyItem'; uid: number; name: string }
   | { type: 'enemyCharge'; uid: number; left: number }
   /** halved — урон срезан модификатором врага (кольчуга, набожный). */
-  | { type: 'enemyHit'; taken: number; absorbed: number; buffed: boolean; firstStrike: boolean; halved: boolean }
+  | { type: 'enemyHit'; taken: number; absorbed: number; buffed: boolean; firstStrike: boolean; halved: boolean; item: ItemId }
   | { type: 'heroHit'; taken: number; absorbed: number; self: boolean }
   | { type: 'heroHeal'; amount: number }
   | { type: 'enemyHeal'; amount: number }
@@ -113,7 +115,18 @@ export type BattleEvent =
   | { type: 'enemyMiss'; name: string }
   | { type: 'woke'; seconds: number }
   // Босс
-  | { type: 'dodge'; name: string; item: string };
+  | { type: 'dodge'; name: string; item: string }
+  // Парирование: замах атаки врага (появилась картинка) и удар (окно закрылось или игрок парировал)
+  | { type: 'windup'; id: number; uid: number; item: EnemyItemId }
+  | { type: 'strike'; id: number; parried: boolean };
+
+/** Атака врага «в полёте»: картинка висит, удар придёт, когда left (сек реального времени) дойдёт до нуля. */
+export interface PendingAttack {
+  id: number;
+  slot: EnemySlot;
+  left: number;
+  total: number;
+}
 
 /**
  * fight     — идёт бой с текущим врагом;
@@ -147,12 +160,17 @@ export class BattleSim {
   items: OwnedItem[];
   /** Итоговые характеристики и эффекты соседства — для подсказок. */
   powers = new Map<number, ItemPower>();
+  /** Эффекты соседства при текущем враге — для полосок связей на сетке. */
+  effects: AppliedEffect[] = [];
   slots: HeroSlot[] = [];
   index = 0;
   enemy!: EnemyState;
   /** Украдено из награды каждого заказа. */
   stolen: number[];
   status: BattleStatus = 'fight';
+  /** Атаки текущего врага в полёте (окно парирования). Смерть врага их отменяет. */
+  pending: PendingAttack[] = [];
+  private nextPendingId = 1;
   private events: BattleEvent[] = [];
 
   constructor(cfg: BattleConfig) {
@@ -254,7 +272,9 @@ export class BattleSim {
 
   /** Пересчитать соседство по оставшимся предметам и внешним запретам и сообщить, что изменилось. */
   private recompute(initial = false): void {
-    this.powers = computePower(this.items, this.blockRule()).powers;
+    const power = computePower(this.items, this.blockRule());
+    this.powers = power.powers;
+    this.effects = power.effects;
     for (const slot of this.slots) {
       const p = this.powers.get(slot.item.uid)!;
       const was = { disabled: slot.disabled, stats: slot.stats };
@@ -328,8 +348,20 @@ export class BattleSim {
   // ─── Время ───────────────────────────────────────────────────────────────
 
   /** Продвинуть бой на dt секунд игрового времени. */
-  step(dt: number): void {
+  /**
+   * Продвинуть бой: dt — игровое время (с ускорением), realDt — реальное (окна парирования от ускорения не зависят).
+   * Симуляция передаёт одно dt — для неё это бой на ×1.
+   */
+  step(dt: number, realDt = dt): void {
     if (this.status !== 'fight') return;
+
+    // Атаки в полёте: окно закрылось — удар.
+    for (const p of [...this.pending]) {
+      p.left -= realDt;
+      if (p.left > 0) continue;
+      this.strike(p, false);
+      if (this.checkEnd()) return;
+    }
 
     if (this.weaponBuff.time > 0) {
       this.weaponBuff.time = Math.max(0, this.weaponBuff.time - dt);
@@ -375,6 +407,15 @@ export class BattleSim {
 
   // ─── Герой ───────────────────────────────────────────────────────────────
 
+  /** Игрок нажал картинку атаки: удар приходит сразу, ослабленный (PARRY_DAMAGE_MULT), и не крадёт монеты. */
+  parry(id: number): boolean {
+    const p = this.pending.find((a) => a.id === id);
+    if (!p || this.status !== 'fight') return false;
+    this.strike(p, true);
+    this.checkEnd();
+    return true;
+  }
+
   /** Применить активный предмет героя. false — нельзя (не бой, отключён, нет зарядов, не активный). */
   useActive(uid: number): boolean {
     const slot = this.actives.find((a) => a.item.uid === uid);
@@ -412,7 +453,7 @@ export class BattleSim {
     if (s.damage) {
       const mult = def.category === 'weapon' ? this.weaponBuff.mult : 1;
       const resist = this.resistMult(def);
-      this.damageEnemy(Math.round(s.damage * mult * resist), mult > 1, resist < 1);
+      this.damageEnemy(Math.round(s.damage * mult * resist), mult > 1, resist < 1, def.id);
     }
     if (s.heal) {
       if (slot.poisoned) {
@@ -456,7 +497,7 @@ export class BattleSim {
     return m;
   }
 
-  private damageEnemy(dmg: number, buffed: boolean, halved: boolean): void {
+  private damageEnemy(dmg: number, buffed: boolean, halved: boolean, item: ItemId): void {
     // Призрак: первый удар героя по каждому врагу его заказа — усиленный.
     const firstStrike = !this.enemy.hitOnce && !!this.condition.firstHitBonus;
     this.enemy.hitOnce = true;
@@ -465,7 +506,7 @@ export class BattleSim {
     this.enemy.block -= absorbed;
     const taken = dmg - absorbed;
     this.enemy.hp = Math.max(0, this.enemy.hp - taken);
-    this.events.push({ type: 'enemyHit', taken, absorbed, buffed, firstStrike, halved });
+    this.events.push({ type: 'enemyHit', taken, absorbed, buffed, firstStrike, halved, item });
   }
 
   // ─── Враг ────────────────────────────────────────────────────────────────
@@ -488,20 +529,12 @@ export class BattleSim {
       slot.charges--;
       this.events.push({ type: 'enemyCharge', uid: slot.uid, left: slot.charges });
     }
-    if (s.damage && e.mod === 'drunk' && this.rng() < MODIFIER_STATS.drunkMiss) {
-      // Пьяный промахнулся: урона нет, мешок не срабатывает (заряд всё равно потрачен).
-      this.events.push({ type: 'enemyMiss', name: slot.def.name });
-    } else if (s.damage) {
-      const dmg = s.damage * e.power * enemyDamageMult(e.mod) * (s.monsterMult ?? 1);
-      const taken = this.damageHero(Math.round(dmg));
-      if (taken > 0) {
-        for (const o of e.slots) {
-          if (o.def.mode !== 'onHit') continue;
-          const steal = o.stats.stealCoins ?? 0;
-          this.stolen[this.chain[this.index].contract] += steal;
-          this.events.push({ type: 'onHit', uid: o.uid, steal });
-        }
-      }
+    if (s.damage) {
+      // Атака не бьёт сразу: замах, окно парирования (реальное время), потом удар (strike).
+      const window = FEEL.parry.window;
+      const p: PendingAttack = { id: this.nextPendingId++, slot, left: window, total: window };
+      this.pending.push(p);
+      this.events.push({ type: 'windup', id: p.id, uid: slot.uid, item: slot.def.id });
     }
     if (s.heal) {
       const amount = Math.min(Math.round(s.heal * e.power), e.maxHp - e.hp);
@@ -512,6 +545,30 @@ export class BattleSim {
       const amount = Math.round(s.block * e.power);
       e.block = Math.min(ENEMY_BLOCK_MAX, e.block + amount);
       this.events.push({ type: 'enemyBlock', amount });
+    }
+  }
+
+  /** Удар атаки в полёте: полный или парированный. Пьяный бросает кубик на промах в момент удара. */
+  private strike(p: PendingAttack, parried: boolean): void {
+    this.pending = this.pending.filter((a) => a !== p);
+    this.events.push({ type: 'strike', id: p.id, parried });
+    const e = this.enemy;
+    const s = p.slot.stats;
+    if (e.mod === 'drunk' && this.rng() < MODIFIER_STATS.drunkMiss) {
+      // Пьяный промахнулся: урона нет, мешок не срабатывает (заряд всё равно потрачен).
+      this.events.push({ type: 'enemyMiss', name: p.slot.def.name });
+      return;
+    }
+    const dmg = (s.damage ?? 0) * e.power * enemyDamageMult(e.mod) * (s.monsterMult ?? 1) * (parried ? PARRY_DAMAGE_MULT : 1);
+    const taken = this.damageHero(Math.round(dmg));
+    if (taken > 0 && !parried) {
+      // Мешок разбойника: крадёт при каждом прошедшем ударе; парированный удар не крадёт.
+      for (const o of e.slots) {
+        if (o.def.mode !== 'onHit') continue;
+        const steal = o.stats.stealCoins ?? 0;
+        this.stolen[this.chain[this.index].contract] += steal;
+        this.events.push({ type: 'onHit', uid: o.uid, steal });
+      }
     }
   }
 
@@ -531,6 +588,7 @@ export class BattleSim {
   private checkEnd(): boolean {
     if (this.enemy.hp <= 0) {
       this.status = this.index >= this.chain.length - 1 ? 'won' : 'enemyDown';
+      this.pending = []; // убитый враг уже не ударит: его атаки в полёте отменяются
       return true;
     }
     if (this.heroHp <= 0) {

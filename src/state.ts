@@ -1,7 +1,6 @@
 // Состояние забега — один объект на всю игру. Сцены читают и меняют его через функции ниже.
 import * as Phaser from 'phaser';
 import {
-  DEBT_PAYMENTS,
   ENEMY_STAT_MULT_BY_NIGHT,
   ITEM_STATS,
   MAX_STAR,
@@ -11,13 +10,15 @@ import {
   SHOP_REROLL_STEP,
   START_COINS,
   START_ITEMS,
+  START_LIVES,
   STAR_MULT,
 } from './config/balance';
 import { CLIENTS } from './data/clients';
-import type { ItemId } from './data/items';
+import { ITEM_IDS, type ItemId } from './data/items';
 import type { ChainLink } from './systems/battle';
 import { findSpot, type OwnedItem } from './systems/backpack';
 import { TUTORIAL } from './data/tutorial';
+import { DEBUG_COINS } from './config/balance';
 import { fixedContract, generateQueue, levelForNight, type Contract } from './systems/contracts';
 import { rollShopOffers } from './systems/shop';
 import { maxCharges, starOf } from './systems/synergy';
@@ -34,9 +35,14 @@ export interface ContractResult {
   /** Побеждено врагов этого заказа. */
   defeated: number;
   done: boolean;
+  /** Награда, которая приходит сейчас (у заказа с авансом — 0: она уже выплачена при принятии). */
   reward: number;
   penalty: number;
   stolen: number;
+  /** Заказ с авансом (Кикимора). */
+  advance: boolean;
+  /** Аванс, который надо вернуть (заказ не выполнен). */
+  refund: number;
 }
 
 export interface NightSummary {
@@ -47,18 +53,11 @@ export interface NightSummary {
   penalty: number;
   lostItem: ItemId | null;
   coinsBefore: number;
-  /** После наград и неустоек, не ниже 0. */
-  coinsAfterContracts: number;
-  /** Платёж по долгу этой ночи по графику (DEBT_PAYMENTS). */
-  paymentBase: number;
-  /** Награды заказов кикиморы: идут в счёт долга, а не монетами. */
-  debtCredit: number;
-  /** Часть награды кикиморы сверх платежа — она перешла в монеты (уже учтена в coinsAfterContracts). */
-  creditToCoins: number;
-  /** Сколько реально нужно заплатить: paymentBase − debtCredit, не ниже 0. */
-  payment: number;
-  paid: boolean;
+  /** После наград, неустоек, кражи и возврата авансов; не ниже 0. */
   coinsAfter: number;
+  /** Жизни до и после этой ночи (смерть в бою отнимает одну). */
+  livesBefore: number;
+  livesAfter: number;
   /** null — забег продолжается. */
   gameOver: 'win' | 'lose' | null;
 }
@@ -82,6 +81,10 @@ export interface RunState {
   tutorial: boolean;
   /** Номер текущего шага обучения в TUTORIAL_STEPS (шаги идут строго по порядку; дошли до конца — шагов больше нет). */
   tutorialStep: number;
+  /** Дебаг-режим из меню: DEBUG_COINS монет, без обучения, в магазине все предметы и они не кончаются. */
+  debug: boolean;
+  /** Жизни на забег (START_LIVES). Смерть в бою отнимает одну; ноль — конец игры. */
+  lives: number;
 }
 
 export let run: RunState = emptyRun();
@@ -100,13 +103,20 @@ function emptyRun(): RunState {
     summary: null,
     tutorial: false,
     tutorialStep: 0,
+    debug: false,
+    lives: START_LIVES,
   };
 }
 
-/** tutorial — первая ночь пойдёт по сценарию обучения (src/data/tutorial.ts). */
-export function newRun(tutorial = false): void {
+/**
+ * tutorial — первая ночь пойдёт по сценарию обучения (src/data/tutorial.ts).
+ * debug — дебаг-режим: обучения нет, DEBUG_COINS монет, в магазине все предметы.
+ */
+export function newRun(tutorial = false, debug = false): void {
   run = emptyRun();
-  run.tutorial = tutorial;
+  run.debug = debug;
+  run.tutorial = tutorial && !debug;
+  if (debug) run.coins = DEBUG_COINS;
   for (const id of START_ITEMS) addItem(id);
   startNight();
 }
@@ -172,7 +182,11 @@ export function heroLevel(): number {
 export function decideVisitor(accept: boolean): void {
   const c = currentVisitor();
   if (!c) return;
-  if (accept && run.accepted.length < heroLevel()) run.accepted.push(c);
+  if (accept && run.accepted.length < heroLevel()) {
+    run.accepted.push(c);
+    // Кикимора платит авансом: деньги сразу, их можно потратить в магазине этой же ночью.
+    if (CLIENTS[c.client].condition.advance) run.coins += c.reward;
+  }
   run.queuePos = run.accepted.length >= heroLevel() ? run.queue.length : run.queuePos + 1;
 }
 
@@ -194,16 +208,17 @@ export function dayChain(): ChainLink[] {
 // ─── Магазин ─────────────────────────────────────────────────────────────────
 
 function rollShop(): void {
-  run.shopOffers = rollShopOffers(run.night);
+  // Дебаг: весь список предметов, без случайности и без редкости по ночам.
+  run.shopOffers = run.debug ? [...ITEM_IDS] : rollShopOffers(run.night);
 }
 
 export function rerollCost(): number {
   return SHOP_REROLL_BASE + SHOP_REROLL_STEP * run.rerolls;
 }
 
-/** В обучающую ночь ассортимент фиксированный — обновлять нельзя. */
+/** В обучающую ночь ассортимент фиксированный, в дебаге — уже весь список: обновлять нельзя. */
 export function canReroll(): boolean {
-  return !run.tutorial;
+  return !run.tutorial && !run.debug;
 }
 
 export function reroll(): boolean {
@@ -258,7 +273,7 @@ export function buyAndMerge(slot: number, targetUid: number): boolean {
   const target = run.items.find((i) => i.uid === targetUid);
   if (!id || !target || target.id !== id || starOf(target) !== 1 || run.coins < ITEM_STATS[id].price) return false;
   run.coins -= ITEM_STATS[id].price;
-  run.shopOffers[slot] = null;
+  if (!run.debug) run.shopOffers[slot] = null;
   target.charges = mergedCharges(ITEM_STATS[id].charges, target.charges, 1);
   target.star = 2;
   return true;
@@ -274,7 +289,7 @@ export function buy(slot: number): boolean {
   const id = run.shopOffers[slot];
   if (!id || run.coins < ITEM_STATS[id].price) return false;
   run.coins -= ITEM_STATS[id].price;
-  run.shopOffers[slot] = null;
+  if (!run.debug) run.shopOffers[slot] = null; // в дебаге товар не кончается
   addItem(id);
   return true;
 }
@@ -320,29 +335,39 @@ export function contractResults(outcome: DayOutcome): ContractResult[] {
     start += total;
     const stolen = outcome.stolen[i] ?? 0;
     const done = defeated >= total;
+    const advance = !!CLIENTS[contract.client].condition.advance;
     let reward = 0;
     let penalty = 0;
-    if (done) reward = Math.max(0, contract.reward - stolen);
-    else if (outcome.kind === 'death') penalty = contract.penalty;
-    else penalty = Math.ceil((contract.penalty * (total - defeated)) / total);
-    return { contract, defeated, done, reward, penalty, stolen };
+    let refund = 0;
+    // Аванс уже выплачен при принятии: награды сейчас нет, а провал — вернуть его.
+    if (done) reward = advance ? 0 : Math.max(0, contract.reward - stolen);
+    else {
+      penalty = outcome.kind === 'death' ? contract.penalty : Math.ceil((contract.penalty * (total - defeated)) / total);
+      if (advance) refund = contract.reward;
+    }
+    return { contract, defeated, done, reward, penalty, stolen, advance, refund };
   });
 }
 
-/** Сколько неустоек придётся заплатить, если отступить сейчас. */
+/** Сколько придётся отдать, если отступить сейчас: неустойки и возврат авансов. */
 export function retreatPenalty(defeated: number, stolen: number[]): number {
-  return contractResults({ kind: 'retreat', defeated, stolen }).reduce((s, r) => s + r.penalty, 0);
+  return contractResults({ kind: 'retreat', defeated, stolen }).reduce((s, r) => s + r.penalty + r.refund, 0);
 }
 
-/** Применяет итог дня и платёж по долгу. Вызывается один раз в конце дня. */
+/** Применяет итог дня: награды, неустойки, возврат авансов; смерть — минус жизнь и случайный предмет. Один раз в конце дня. */
 export function resolveNight(outcome: DayOutcome): NightSummary {
   const coinsBefore = run.coins;
+  const livesBefore = run.lives;
   const results = contractResults(outcome);
   const reward = results.reduce((s, r) => s + r.reward, 0);
   const penalty = results.reduce((s, r) => s + r.penalty, 0);
+  const refund = results.reduce((s, r) => s + r.refund, 0);
+  // Кража у заказа с авансом: награда уже в кошельке — украденное уходит из монет.
+  const stolenFromAdvance = results.filter((r) => r.advance && r.done).reduce((s, r) => s + Math.min(r.stolen, r.contract.reward), 0);
 
   let lostItem: ItemId | null = null;
   if (outcome.kind === 'death') {
+    run.lives = Math.max(0, run.lives - 1);
     const inGrid = run.items.filter((i) => i.inGrid);
     const pool = inGrid.length > 0 ? inGrid : run.items;
     if (pool.length > 0) {
@@ -352,24 +377,11 @@ export function resolveNight(outcome: DayOutcome): NightSummary {
     }
   }
 
-  // Кикимора платит списанием долга: её награда уменьшает платёж этой ночи, остаток — в монеты.
-  const debtCredit = results.filter((r) => CLIENTS[r.contract.client].condition.payDebt).reduce((s, r) => s + r.reward, 0);
-  const paymentBase = DEBT_PAYMENTS[run.night - 1];
-  const payment = Math.max(0, paymentBase - debtCredit);
-  const creditToCoins = Math.max(0, debtCredit - paymentBase);
-
-  // Монеты не уходят в минус: неустойка забирает максимум всё, что есть.
-  run.coins = Math.max(0, run.coins + (reward - debtCredit) + creditToCoins - penalty);
-  const coinsAfterContracts = run.coins;
-  const paid = run.coins >= payment;
+  // Монеты не уходят в минус: неустойка и возврат аванса забирают максимум всё, что есть.
+  run.coins = Math.max(0, run.coins + reward - penalty - refund - stolenFromAdvance);
   let gameOver: NightSummary['gameOver'] = null;
-  if (paid) {
-    run.coins -= payment;
-    if (run.night >= NIGHTS) gameOver = 'win';
-  } else {
-    run.coins = 0; // отдал всё, что было, — долг не оплачен
-    gameOver = 'lose';
-  }
+  if (run.lives <= 0) gameOver = 'lose';
+  else if (run.night >= NIGHTS) gameOver = 'win';
 
   run.summary = {
     night: run.night,
@@ -379,13 +391,9 @@ export function resolveNight(outcome: DayOutcome): NightSummary {
     penalty,
     lostItem,
     coinsBefore,
-    coinsAfterContracts,
-    paymentBase,
-    debtCredit,
-    creditToCoins,
-    payment,
-    paid,
     coinsAfter: run.coins,
+    livesBefore,
+    livesAfter: run.lives,
     gameOver,
   };
   return run.summary;

@@ -2,15 +2,43 @@
 // Соседство: метки при перетаскивании, серые отключённые предметы, панель «Сила снаряжения».
 // Слияние: предмет, отпущенный на такой же предмет того же уровня, становится ★2 / ★3.
 import * as Phaser from 'phaser';
-import { BACKPACK_LAYOUT, BG_BACKPACK_KEY, HORSE_ART, itemKey } from '../config/assets';
+import { BACKPACK_LAYOUT, BG_BACKPACK_KEY, categoryKey, HORSE_ART, itemKey, statIconKey, tagKey, type StatIconId } from '../config/assets';
+import { FEEL } from '../config/feel';
 import { GridView, type GridLabel, type GridLabels } from '../components/GridView';
-import { ITEMS } from '../data/items';
+import { CATEGORY_NAMES, ITEMS } from '../data/items';
 import { canPlace, MASK, type OwnedItem } from '../systems/backpack';
-import { computePower, gearSummary, starOf, type PowerResult } from '../systems/synergy';
+import { computePower, gearSummary, pairLinks, starOf, starStats, type PowerResult } from '../systems/synergy';
 import { tutorialAttach, tutorialDone } from '../components/Hints';
 import { playMusic, sfx } from '../components/Sound';
 import { canMerge, mergeItems, run } from '../state';
-import { addBackground, addHeader, addHorse, addText, Button, C, describeOwnedItem, fadeIn, goto, itemRarityFrame } from '../ui';
+import {
+  addBackground,
+  addHeader,
+  addHorse,
+  addText,
+  Button,
+  C,
+  describeOwnedItem,
+  fadeIn,
+  fit,
+  goto,
+  itemRarityFrame,
+  itemStatChips,
+  TITLE,
+  W,
+} from '../ui';
+
+/** Плашка на пергаменте: значок (и значок тега) + короткое значение; hint — полная фраза при наведении. */
+interface PanelChip {
+  icon: string;
+  tag?: string;
+  value: string;
+  hint: string;
+  color?: string;
+}
+
+/** Размеры плашек и подсказки на пергаменте. */
+const PANEL = { pad: 16, chipH: 38, chipIcon: 28, chipGap: 8, chipFont: 22, tipW: 440 };
 
 /** Галочка «Скрыть эффекты соседства» — запоминается в браузере. */
 const HIDE_LABELS_KEY = 'ludmak.hideSynergyLabels';
@@ -34,8 +62,13 @@ function saveHideLabels(v: boolean): void {
 
 export class BackpackScene extends Phaser.Scene {
   private countText!: Phaser.GameObjects.Text;
-  private powerText!: Phaser.GameObjects.Text;
   private view!: GridView<OwnedItem>;
+  /** Содержимое пергамента (пересобирается) и подсказка к его плашкам. */
+  private panelObjs: Phaser.GameObjects.GameObject[] = [];
+  private tip!: Phaser.GameObjects.Text;
+  /** Что на пергаменте: сила снаряжения или предмет (uid), на который навели. */
+  private shownItem: number | null = null;
+  private hoveredItem: number | null = null;
   private power!: PowerResult;
 
   constructor() {
@@ -82,15 +115,39 @@ export class BackpackScene extends Phaser.Scene {
       next.setVisible(many).setEnabled(page < count - 1);
     };
 
-    // Пергамент: «Сила снаряжения»; при наведении на предмет вместо неё — описание предмета. Чернила тёмные.
-    const pw = L.power;
-    const powerTitle = addText(this, pw.x + 16, pw.y + 10, 'Сила снаряжения', 28, C.inkAccent, { fontStyle: 'bold' });
-    this.powerText = addText(this, pw.x + 16, pw.y + 52, '', 21, C.ink, { lineSpacing: 5, wordWrap: { width: pw.w - 32 } });
-    const info = addText(this, pw.x + 16, pw.y + 10, '', 20, C.ink, { lineSpacing: 3, wordWrap: { width: pw.w - 32 } }).setVisible(false);
-    const showInfo = (t: string | null) => {
-      info.setText(t ?? '').setVisible(!!t);
-      powerTitle.setVisible(!t);
-      this.powerText.setVisible(!t);
+    // Пергамент: «Сила снаряжения»; при наведении на предмет вместо неё — предмет. Числа — значками,
+    // полные фразы — в подсказке при наведении на значок. Пока мышь на пергаменте, предмет не пропадает.
+    this.panelObjs = [];
+    this.shownItem = null;
+    this.hoveredItem = null;
+    this.tip = addText(this, 0, 0, '', 20, C.text, {
+      backgroundColor: 'rgba(20,18,26,0.95)',
+      padding: { x: 12, y: 8 },
+      wordWrap: { width: PANEL.tipW },
+      lineSpacing: 3,
+    })
+      .setOrigin(0.5, 1)
+      .setDepth(100)
+      .setVisible(false);
+    const onPanel = (p: Phaser.Input.Pointer) => {
+      const r = L.power;
+      return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+    };
+    // Мышь ушла с предмета: описание ждёт FEEL.backpackInfoKeepMs, чтобы успеть довести мышь до пергамента
+    // (между сеткой и пергаментом — пустое место). Дошла — держится, пока мышь на пергаменте.
+    let leftAt = 0;
+    let entered = false;
+    const stillItem = () => this.shownItem !== null && this.hoveredItem === null;
+    const check = (p: Phaser.Input.Pointer) => {
+      if (!stillItem()) return;
+      if (onPanel(p)) entered = true;
+      else if (entered || this.time.now - leftAt > FEEL.backpackInfoKeepMs) this.showPanel(null);
+    };
+    this.input.on('pointermove', check);
+    const itemLeft = () => {
+      leftAt = this.time.now;
+      entered = false;
+      this.time.delayedCall(FEEL.backpackInfoKeepMs + 20, () => check(this.input.activePointer));
     };
     this.power = computePower(run.items);
     this.view = new GridView<OwnedItem>(this, {
@@ -112,7 +169,11 @@ export class BackpackScene extends Phaser.Scene {
         frame: itemRarityFrame(it.id),
       }),
       describe: (it) => describeOwnedItem(it, this.power.powers, run.items),
-      onHover: (t) => showInfo(t),
+      onHover: (_t, it) => {
+        this.hoveredItem = it?.uid ?? null;
+        if (it) this.showPanel(it.uid);
+        else itemLeft();
+      },
       stash: s,
       canPlace: (it, rotated, col, row) => canPlace(run.items, it.id, rotated, col, row, it.uid),
       preview: (it, col, row, rotated) => this.previewLabels(it, col, row, rotated),
@@ -123,14 +184,21 @@ export class BackpackScene extends Phaser.Scene {
         tutorialDone(this, 'drag'); // обучение: предмет переложили
       },
       onStashPages: showPages,
+      linkHover: true,
+      // Превью связей: связи перетаскиваемого предмета там, куда его кладут.
+      previewLinks: (it, col, row, rotated) => {
+        const moved = { ...it, inGrid: true, col, row, rotated };
+        const { effects } = computePower(run.items.map((i) => (i.uid === it.uid ? moved : i)));
+        return pairLinks(effects).filter((l) => l.a === it.uid || l.b === it.uid);
+      },
     }).setDepth(10);
     this.refresh();
 
     const home = L.home;
-    new Button(this, home.x, home.y, home.w, home.h, '← Домой', () => {
+    new Button(this, home.x, home.y, home.w, home.h, 'Вернуться', () => {
       tutorialDone(this, 'bagsHome');
       goto(this, 'Home');
-    }, 32);
+    }, 24);
 
     // Обучение: сетка (перетащить, метки), панель «Сила снаряжения», кнопка «Домой».
     const grid = { x: L.grid.x, y: L.grid.y, w: gridW, h: gridH };
@@ -210,22 +278,176 @@ export class BackpackScene extends Phaser.Scene {
     this.power = computePower(run.items);
     for (const it of run.items) this.view.setDisabled(it.uid, !!this.power.powers.get(it.uid)?.disabled);
     this.view.setStaticLabels(this.staticLabels());
+    this.view.setLinks(pairLinks(this.power.effects));
 
     const inGrid = run.items.filter((i) => i.inGrid).length;
     this.countText.setText(`В сумках: ${inGrid}   Вне сумок: ${run.items.length - inGrid}`);
 
+    // Предмет мог исчезнуть (слияние) — тогда снова сила снаряжения.
+    if (this.shownItem !== null && !run.items.some((i) => i.uid === this.shownItem)) this.shownItem = null;
+    this.showPanel(this.shownItem);
+  }
+
+  // ─── Пергамент ───────────────────────────────────────────────────────────
+
+  /** Пересобрать пергамент: uid — описание предмета, null — сила снаряжения. */
+  private showPanel(uid: number | null): void {
+    this.shownItem = uid;
+    this.tip.setVisible(false);
+    for (const o of this.panelObjs) o.destroy();
+    this.panelObjs = [];
+    const it = uid === null ? undefined : run.items.find((i) => i.uid === uid);
+    if (it) this.drawItemInfo(it);
+    else this.drawPower();
+  }
+
+  private keep<T extends Phaser.GameObjects.GameObject>(o: T): T {
+    this.panelObjs.push(o);
+    return o;
+  }
+
+  /** При наведении — подсказка над объектом. */
+  private withTip<T extends Phaser.GameObjects.Text | Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image>(o: T, hint: string): T {
+    o.setInteractive();
+    o.on('pointerover', () => {
+      const b = o.getBounds();
+      this.tip
+        .setText(hint)
+        .setPosition(Phaser.Math.Clamp(b.centerX, PANEL.tipW / 2 + 20, W - PANEL.tipW / 2 - 20), b.top - 6)
+        .setVisible(true);
+    });
+    o.on('pointerout', () => this.tip.setVisible(false));
+    return o;
+  }
+
+  /** Плашки слева направо с переносом в пределах пергамента. Возвращает нижний край. */
+  private chipRow(y: number, chips: PanelChip[]): number {
+    const r = BACKPACK_LAYOUT.power;
+    const left = r.x + PANEL.pad;
+    const right = r.x + r.w - PANEL.pad;
+    let x = left;
+    let top = y;
+    for (const ch of chips) {
+      const t = this.keep(addText(this, 0, 0, ch.value, PANEL.chipFont, ch.color ?? C.text, { fontStyle: 'bold' }).setOrigin(0, 0.5));
+      const w = 8 + PANEL.chipIcon + (ch.tag ? PANEL.chipIcon + 4 : 0) + 6 + t.width + 10;
+      if (x > left && x + w > right) {
+        x = left;
+        top += PANEL.chipH + PANEL.chipGap;
+      }
+      const mid = top + PANEL.chipH / 2;
+      const bg = this.keep(this.add.rectangle(x, top, w, PANEL.chipH, 0x2b1d12, 0.85).setOrigin(0));
+      let ix = x + 8;
+      this.keep(fit(this.add.image(ix + PANEL.chipIcon / 2, mid, ch.icon), PANEL.chipIcon, PANEL.chipIcon));
+      ix += PANEL.chipIcon + 4;
+      if (ch.tag) {
+        this.keep(fit(this.add.image(ix + PANEL.chipIcon / 2, mid, ch.tag), PANEL.chipIcon, PANEL.chipIcon));
+        ix += PANEL.chipIcon + 4;
+      }
+      t.setPosition(ix + 2, mid);
+      this.children.bringToTop(t);
+      this.withTip(bg, ch.hint);
+      x += w + PANEL.chipGap;
+    }
+    return chips.length ? top + PANEL.chipH : y;
+  }
+
+  /** Сила снаряжения: в секунду — урон, блок, лечение, урон себе; отключённые и взрывоопасные предметы. */
+  private drawPower(): void {
+    const r = BACKPACK_LAYOUT.power;
+    const x = r.x + PANEL.pad;
+    this.keep(addText(this, x, r.y + 10, 'Сила снаряжения', 30, C.inkAccent, TITLE));
+    if (!run.items.some((i) => i.inGrid)) {
+      this.keep(addText(this, x, r.y + 60, 'Сумки пусты — положи сюда предметы.', 21, C.inkDim));
+      return;
+    }
     const g = gearSummary(run.items, this.power);
     const f = (n: number) => n.toFixed(1);
-    const lines = [
-      `Урон в секунду: ${f(g.dps)}`,
-      `Блок в секунду: ${f(g.blockPerSec)}`,
-      `Лечение в секунду: ${f(g.healPerSec)}${g.selfPerSec > 0 ? `   Урон себе в секунду: ${f(g.selfPerSec)}` : ''}`,
-      `Отключено: ${g.disabled.length ? g.disabled.map((id) => ITEMS[id].name).join(', ') : 'ничего'}`,
+    const passive = 'Считаются пассивные предметы в сумках с учётом соседей; активные (бомбы, эликсиры) сюда не входят.';
+    const stat = (icon: StatIconId) => statIconKey(icon);
+    const chips: PanelChip[] = [
+      { icon: stat('damage'), value: `${f(g.dps)}/с`, hint: `Урон в секунду: ${f(g.dps)}.\n${passive}` },
+      { icon: stat('block'), value: `${f(g.blockPerSec)}/с`, hint: `Блок в секунду: ${f(g.blockPerSec)}. Блок поглощает удары врага.\n${passive}` },
+      { icon: stat('heal'), value: `${f(g.healPerSec)}/с`, hint: `Лечение в секунду: ${f(g.healPerSec)}.\n${passive}` },
     ];
-    if (g.explosive.length) {
-      lines.push(`Может взорваться: ${g.explosive.map((e) => `${ITEMS[e.id].name} (${Math.round(e.chance * 100)}%)`).join(', ')}`);
+    if (g.selfPerSec > 0) {
+      chips.push({
+        icon: stat('self'),
+        value: `−${f(g.selfPerSec)}/с`,
+        color: C.bad,
+        hint: `Урон себе в секунду: ${f(g.selfPerSec)} — столько в среднем ранят героя его же предметы.`,
+      });
     }
-    lines.push('Активные предметы (бомбы, эликсиры) сюда не входят.');
-    this.powerText.setText(lines.join('\n'));
+    let y = this.chipRow(r.y + 58, chips) + 12;
+    if (g.disabled.length) {
+      const t = this.keep(
+        addText(this, x, y, `Отключены: ${g.disabled.map((id) => ITEMS[id].name).join(', ')}`, 21, C.inkBad, {
+          fontStyle: 'bold',
+          wordWrap: { width: r.w - 2 * PANEL.pad },
+        }),
+      );
+      this.withTip(t, 'Эти предметы в бою не сработают: их отключают соседи или условие заказа. Наведи на предмет, чтобы узнать, кто мешает.');
+      y += t.height + 8;
+    }
+    if (g.explosive.length) {
+      this.chipRow(
+        y,
+        g.explosive.map((e) => {
+          const pct = Math.round(e.chance * 100);
+          return {
+            icon: tagKey('noisy'),
+            tag: tagKey('fire'),
+            value: `${ITEMS[e.id].name} ${pct}%`,
+            color: C.bad,
+            hint: `${ITEMS[e.id].name} — шумный предмет рядом с огнём: в бою может взорваться (шанс ${pct}%) и ранить героя. Убери огонь от него.`,
+          };
+        }),
+      );
+    }
+  }
+
+  /** Предмет: имя и категория, характеристики значками (с соседями), от кого что пришло, отключён ли. */
+  private drawItemInfo(it: OwnedItem): void {
+    const r = BACKPACK_LAYOUT.power;
+    const x = r.x + PANEL.pad;
+    const d = ITEMS[it.id];
+    const star = starOf(it);
+    const name = this.keep(addText(this, x + 40, r.y + 10, `${d.name}${star > 1 ? ` ★${star}` : ''}`, 28, C.inkAccent, TITLE));
+    const cat = this.keep(fit(this.add.image(x + 16, name.y + name.height / 2, categoryKey(d.category)), 32, 32));
+    this.withTip(cat, `Категория: ${CATEGORY_NAMES[d.category]}`);
+
+    const p = it.inGrid ? this.power.powers.get(it.uid) : undefined;
+    const base = p?.base ?? starStats(it.id, star);
+    const final = p?.final ?? base;
+    // Итог с соседями; где число изменилось — зелёным или красным, а в подсказке — сколько было без соседей.
+    const baseChips = itemStatChips(it.id, base, it.charges);
+    const chips: PanelChip[] = itemStatChips(it.id, final, it.charges).map((ch) => {
+      const was = baseChips.find((b) => b.icon === ch.icon);
+      const changed = was && was.value !== ch.value;
+      const better = changed && parseFloat(ch.value.replace(/[^\d.]/g, '')) > parseFloat(was.value.replace(/[^\d.]/g, ''));
+      return {
+        icon: statIconKey(ch.icon),
+        tag: ch.tag ? tagKey(ch.tag) : undefined,
+        value: ch.value,
+        color: ch.icon === 'self' ? C.bad : changed ? (better === (ch.icon !== 'cooldown') ? C.good : C.bad) : C.text,
+        hint: changed ? `${ch.hint}\nБез соседей: ${was.value}` : ch.hint,
+      };
+    });
+    let y = this.chipRow(r.y + 58, chips) + 10;
+
+    const line = (text: string, color: string, hint?: string, bold = false) => {
+      const t = this.keep(addText(this, x, y, text, 20, color, { fontStyle: bold ? 'bold' : 'normal', wordWrap: { width: r.w - 2 * PANEL.pad } }));
+      if (hint) this.withTip(t, hint);
+      y += t.height + 4;
+    };
+    if (!it.inGrid) return line('Вне сумок — в бою не участвует.', C.inkDim);
+    if (!p) return;
+    for (const e of p.received) {
+      const src = run.items.find((i) => i.uid === e.source);
+      const srcName = src ? ITEMS[src.id].name : '?';
+      line(`• ${srcName}: ${e.label}`, e.good ? C.inkGood : C.inkBad, `Соседство «${e.rule.title}» от предмета «${srcName}».`);
+    }
+    if (p.blockedBy) line(`Отключён: ${p.blockedBy}`, C.inkBad, 'В бою этот предмет не сработает и не влияет на соседей.', true);
+    else if (p.disabled) line('Отключён соседом', C.inkBad, 'В бою этот предмет не сработает и не влияет на соседей. Кто мешает — в строках выше.', true);
+    if (p.poisoned) line('Отравлен: лечение ранит', C.inkBad, 'Лечение этого предмета не лечит, а ранит героя.', true);
   }
 }

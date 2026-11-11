@@ -75,6 +75,10 @@ File: item_merge.ogg. Duration: 0.7 seconds. Slavic folk fantasy game, rustic me
 ## Бой
 
 ```
+File: parry.ogg. Duration: 0.3 seconds. Slavic folk fantasy game, rustic medieval village, organic foley. Dry and clean, no music, no voices. A sword parry: bright metallic clang with a few sparks, short ringing tail, satisfying and crisp.
+```
+
+```
 File: hit_enemy.ogg. Duration: 0.2 seconds. Slavic folk fantasy game, rustic medieval village, organic foley. Dry and clean, no music, no voices. Sword strike hitting a person, cloth and flesh impact, short and punchy, no scream.
 ```
 
@@ -136,9 +140,6 @@ File: retreat.ogg. Duration: 1.0 seconds. Slavic folk fantasy game, rustic medie
 File: coins.ogg. Duration: 0.8 seconds. Slavic folk fantasy game, rustic medieval village, organic foley. Dry and clean, no music, no voices. A pouch of coins poured onto a wooden table, rich jingle.
 ```
 
-```
-File: debt_paid.ogg. Duration: 0.8 seconds. Slavic folk fantasy game, rustic medieval village, organic foley. Dry and clean, no music, no voices. Coins counted out and slid across a wooden table, a reluctant payment.
-```
 
 ```
 File: level_up.ogg. Duration: 1.2 seconds. Slavic folk fantasy game, rustic medieval village. No voices. A short rising folk phrase on a wooden flute, level up.

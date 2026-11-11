@@ -10,7 +10,17 @@ import {
   PORTRAIT_W,
   ICON_PX,
   TAG_ICON_PX,
+  UI_ART,
+  BG_HOME_CLOSED_KEY,
+  BG_HOME_CLOSED_PATH,
+  UI_HEADER_KEY,
+  UI_PARCHMENT_KEY,
+  uiButtonKey,
+  uiIconKey,
+  type UiIconId,
+  uiSourceKey,
   type AssetEntry,
+  type ButtonState,
 } from '../config/assets';
 import { ENEMIES } from '../data/enemies';
 import { ENEMY_ITEMS } from '../data/enemyItems';
@@ -35,6 +45,12 @@ export class BootScene extends Phaser.Scene {
     // Отсутствующий файл — не ошибка: картинке Boot нарисует заглушку, звук просто не будет играть.
     this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, () => {});
     for (const a of ASSET_MANIFEST) this.load.image(a.key, a.path);
+    // Оформление интерфейса — необязательное: нет файла — без заглушки, кнопки и шапка рисуются кодом.
+    for (const [s, b] of Object.entries(UI_ART.button)) this.load.image(uiSourceKey(`button_${s}`), b.path);
+    this.load.image(uiSourceKey('header'), UI_ART.header.path);
+    for (const [id, ic] of Object.entries(UI_ART.icons)) this.load.image(uiSourceKey(id), ic.path);
+    this.load.image(uiSourceKey('parchment'), UI_ART.parchment.path);
+    this.load.image(BG_HOME_CLOSED_KEY, BG_HOME_CLOSED_PATH);
     for (const key of AUDIO_KEYS) this.load.audio(key, `${AUDIO_DIR}${key}.${AUDIO_FORMATS[0]}`);
   }
 
@@ -47,9 +63,50 @@ export class BootScene extends Phaser.Scene {
       }
     }
     if (stubbed.length > 0) console.info(`[assets] заглушки (${stubbed.length}):\n` + stubbed.join('\n'));
+    this.prepareUiArt();
     checkEnemyBags();
     restoreMute(this.game);
     this.loadAudioFallback(1, () => this.scene.start('Menu'));
+  }
+
+  /** Кнопки и шапка: обрезать прозрачные поля и уменьшить до рабочего размера (кнопки тянутся с неподвижными углами). */
+  private prepareUiArt(): void {
+    // Значки и пергамент: вырезать без полей и уменьшить до размера, в котором их рисуют.
+    const cut = (src: string, crop: { x: number; y: number; w: number; h: number }, key: string, w: number, h: number) => {
+      if (!this.textures.exists(src)) return;
+      const img = this.textures.get(src).getSourceImage() as HTMLImageElement;
+      const tex = this.textures.createCanvas(key, w, h)!;
+      const ctx = tex.getContext();
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, w, h);
+      tex.refresh();
+    };
+    const IH = UI_ART.iconHeight;
+    for (const [id, ic] of Object.entries(UI_ART.icons) as [UiIconId, (typeof UI_ART.icons)[UiIconId]][]) {
+      cut(uiSourceKey(id), ic.crop, uiIconKey(id), Math.round((ic.crop.w * IH) / ic.crop.h), IH);
+    }
+    cut(uiSourceKey('parchment'), UI_ART.parchment.crop, UI_PARCHMENT_KEY, HOME_LAYOUT.card.w, HOME_LAYOUT.card.h);
+
+    const H = UI_ART.buttonHeight;
+    for (const [s, b] of Object.entries(UI_ART.button) as [ButtonState, (typeof UI_ART.button)[ButtonState]][]) {
+      const src = uiSourceKey(`button_${s}`);
+      if (!this.textures.exists(src)) continue;
+      const img = this.textures.get(src).getSourceImage() as HTMLImageElement;
+      const w = Math.round((b.crop.w * H) / b.crop.h);
+      const tex = this.textures.createCanvas(uiButtonKey(s), w, H)!;
+      const ctx = tex.getContext();
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, b.crop.x, b.crop.y, b.crop.w, b.crop.h, 0, 0, w, H);
+      tex.refresh();
+    }
+    const hs = uiSourceKey('header');
+    if (this.textures.exists(hs)) {
+      const img = this.textures.get(hs).getSourceImage() as HTMLImageElement;
+      const band = UI_ART.header.band;
+      const tex = this.textures.createCanvas(UI_HEADER_KEY, img.width, band.h)!;
+      tex.getContext().drawImage(img, 0, band.y, img.width, band.h, 0, 0, img.width, band.h);
+      tex.refresh();
+    }
   }
 
   /**
@@ -80,7 +137,7 @@ export class BootScene extends Phaser.Scene {
     else if (s.kind === 'enemyItem')
       [w, h] = [ENEMY_ITEMS[s.itemId].w * ITEM_CELL_PX, ENEMY_ITEMS[s.itemId].h * ITEM_CELL_PX];
     else if (s.kind === 'tag') [w, h] = [TAG_ICON_PX, TAG_ICON_PX];
-    else if (s.kind === 'statIcon' || s.kind === 'category') [w, h] = [ICON_PX, ICON_PX];
+    else if (s.kind === 'statIcon' || s.kind === 'category' || s.kind === 'link') [w, h] = [ICON_PX, ICON_PX];
     else if (s.kind === 'home') [w, h] = [1920, 1080];
     else [w, h] = [s.w, s.h];
 
@@ -132,6 +189,13 @@ export class BootScene extends Phaser.Scene {
       drawBadge(ctx, w, TAGS[s.tagId].color, TAG_GLYPHS[s.tagId]);
     } else if (s.kind === 'category') {
       drawBadge(ctx, w, CATEGORY_COLORS[s.category], CATEGORY_GLYPHS[s.category]);
+    } else if (s.kind === 'link') {
+      // Цепь: белая на тёмном круге — в игре красится (tint) в цвет связи.
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2, w / 2 - 1, 0, Math.PI * 2);
+      ctx.fill();
+      drawGlyph(ctx, 'chain', w / 2, h / 2, w * 0.74, '#ffffff');
     } else if (s.kind === 'statIcon') {
       // Значок характеристики: цветной рисунок на тёмном круге.
       const g = STAT_GLYPHS[s.iconId];
