@@ -50,6 +50,10 @@ export const STAT_GLYPHS: Record<StatIconId, { glyph: GlyphId; color: string }> 
   noRetreat: { glyph: 'noRetreat', color: '#ff7a6a' },
   advance: { glyph: 'coinFast', color: '#e0b65a' },
   monster: { glyph: 'skull', color: '#c9a0ff' },
+  /** Медлительность (дебаф щита): красноватые песочные часы. */
+  slow: { glyph: 'hourglass', color: '#e07a50' },
+  /** Парирование основным оружием: золотые скрещённые клинки. */
+  parry: { glyph: 'swords', color: '#e0b65a' },
 };
 
 /** Значок категории (светлый на цветном круге; цвет круга — CATEGORY_COLORS). */

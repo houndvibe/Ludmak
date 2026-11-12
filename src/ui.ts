@@ -1,6 +1,7 @@
 // Общие элементы интерфейса: текст, кнопки, шапка, фон, подписи предметов.
+import { WITCHER_DEFEATED, witcherReminder } from './data/story';
 import * as Phaser from 'phaser';
-import { CLIENT_PENALTY_MULT, CLIENT_REWARD_MULT, ENEMY_ITEM_STATS, GHOST_FIRST_HIT_MULT, ITEM_STATS, NIGHTS, START_LIVES, type ItemStats } from './config/balance';
+import { CLIENT_PENALTY_MULT, CLIENT_REWARD_MULT, ENEMY_ITEM_STATS, GHOST_FIRST_HIT_MULT, ITEM_STATS, NIGHTS, PARRY_DAMAGE_MULT, PARRY_PERK, PARRY_REWARD_MULT, PARRY_REWARD_SHARE, SHIELD_SLOW_BY_STAR, START_LIVES, type ItemStats } from './config/balance';
 import {
   BG_HORSE_KEY,
   categoryKey,
@@ -15,13 +16,15 @@ import {
   uiIconKey,
   type ButtonState,
   type StatIconId,
+  MENU_ART,
+  menuArtKey,
 } from './config/assets';
 import { CLIENTS, type ClientId } from './data/clients';
 import { FEEL } from './config/feel';
 import { getVolume, isMuted, setVolume, sfx, toggleMute } from './components/Sound';
 import { ENEMIES, type EnemyId } from './data/enemies';
 import { ENEMY_CATEGORY_NAMES, ENEMY_ITEMS, type EnemyItemId } from './data/enemyItems';
-import { CATEGORY_NAMES, ITEMS, type ItemId, type ItemTier } from './data/items';
+import { CATEGORY_NAMES, ITEMS, type ItemId, type ItemTier, type ParryPerkId } from './data/items';
 import { enemyName, MODIFIERS, type ModifierId } from './data/modifiers';
 import type { TagId } from './data/tags';
 import type { OwnedItem } from './systems/backpack';
@@ -188,16 +191,35 @@ export function addMuteButton(scene: Phaser.Scene, r: { x: number; y: number; w:
  * Ползунок громкости: тащи мышью или кликни по дорожке. Меняет громкость всей игры (звуки и музыка),
  * значение запоминается в браузере. r — левый край дорожки, длина и центр по вертикали.
  */
-export function addVolumeSlider(scene: Phaser.Scene, r: { x: number; y: number; w: number }): void {
-  const label = addText(scene, r.x, r.y - 44, '', 24, C.text);
-  scene.add.rectangle(r.x, r.y, r.w, 10, 0x000000, 0.6).setOrigin(0, 0.5).setStrokeStyle(2, C.border);
-  const fill = scene.add.rectangle(r.x, r.y, 0, 10, 0xe0b65a).setOrigin(0, 0.5);
-  const knob = scene.add.circle(r.x, r.y, 16, 0xece6d6).setStrokeStyle(3, 0x000000);
-  const show = (v: number) => {
-    fill.width = r.w * v;
-    knob.x = r.x + r.w * v;
-    label.setText(`Громкость: ${Math.round(v * 100)}%`);
-  };
+export function addVolumeSlider(scene: Phaser.Scene, r: { x: number; y: number; w: number; labelY?: number }): void {
+  // Оформление меню (MENU_ART): дорожка, заливка по громкости, ромбы на концах; без картинок — простые прямоугольники.
+  const art = scene.textures.exists(menuArtKey('sliderTrack')) && scene.textures.exists(menuArtKey('sliderFill'));
+  const label = art
+    ? addText(scene, r.x - 4, r.labelY ?? r.y - 34, '', 26, MENU_ART.textColor, TITLE).setOrigin(0, 0.5)
+    : addText(scene, r.x, r.y - 44, '', 24, C.text);
+  let show: (v: number) => void;
+  if (art) {
+    // Все части ползунка — в одном масштабе по обеим осям (дорожка вписывается в длину r.w), без растяжения.
+    const track = scene.add.image(r.x + r.w / 2, r.y, menuArtKey('sliderTrack'));
+    const k = r.w / track.width;
+    track.setScale(k);
+    const fill = scene.add.image(0, r.y, menuArtKey('sliderFill')).setScale(k).setOrigin(0, 0.5);
+    fill.setX(r.x + (r.w - fill.width * k) / 2);
+    if (scene.textures.exists(menuArtKey('sliderEnds'))) scene.add.image(r.x + r.w / 2, r.y, menuArtKey('sliderEnds')).setScale(k);
+    show = (v: number) => {
+      fill.setCrop(0, 0, fill.width * v, fill.height);
+      label.setText(`ГРОМКОСТЬ: ${Math.round(v * 100)}%`);
+    };
+  } else {
+    scene.add.rectangle(r.x, r.y, r.w, 10, 0x000000, 0.6).setOrigin(0, 0.5).setStrokeStyle(2, C.border);
+    const fill = scene.add.rectangle(r.x, r.y, 0, 10, 0xe0b65a).setOrigin(0, 0.5);
+    const knob = scene.add.circle(r.x, r.y, 16, 0xece6d6).setStrokeStyle(3, 0x000000);
+    show = (v: number) => {
+      fill.width = r.w * v;
+      knob.x = r.x + r.w * v;
+      label.setText(`Громкость: ${Math.round(v * 100)}%`);
+    };
+  }
   show(getVolume());
 
   // Зона нажатия шире самой дорожки, чтобы попадать было легко.
@@ -334,15 +356,27 @@ export function addTopBar(scene: Phaser.Scene): void {
 export function addHeader(scene: Phaser.Scene, title: string): () => void {
   addTopBar(scene);
   addMuteButton(scene, HEADER_LAYOUT.mute);
-  addText(scene, 30, 40, `Ночь ${run.night} / ${NIGHTS}    Уровень ${heroLevel()}`, 30).setOrigin(0, 0.5);
+  addText(scene, 30, 28, `Ночь ${run.night} / ${NIGHTS}    Уровень ${heroLevel()}`, 28).setOrigin(0, 0.5);
+  // Напоминание о ведьмаке (письмо ночи 1): сколько ночей до его прихода.
+  addText(scene, 30, 62, run.finished ? WITCHER_DEFEATED : witcherReminder(NIGHTS - run.night), 18, C.accent).setOrigin(0, 0.5);
   addText(scene, W / 2, 40, title, 38, C.text, TITLE).setOrigin(0.5);
   return addCoinsAndLives(scene, W - 30, 40);
 }
 
 const num = (n: number) => (Number.isInteger(n) ? `${n}` : n.toFixed(1));
 
+/** Перк основного оружия словами (подсказка в бою). */
+const PARRY_PERK_TEXT: Record<ParryPerkId, string> = {
+  sword: 'парированный удар вдвое слабее',
+  shield: `отбивает всей областью, парированный удар слабее на ${Math.round((1 - PARRY_PERK.shieldMult) * 100)}%`,
+  dagger: 'за парирование бьёт врага своим уроном',
+  torch: `за парирование предметы врага перезаряжаются на ${PARRY_PERK.torchSlow} с дольше`,
+  axe: `${PARRY_PERK.axeCharges} парирований подряд — следующий удар топора ×${PARRY_PERK.axeMult}`,
+  sickle: `за парирование лечит на ${PARRY_PERK.sickleHeal}`,
+};
+
 /** Характеристики строкой: «урон 6 · раз в 1.5 с». */
-function statsLine(id: ItemId, s: ItemStats, charges?: number): string {
+function statsLine(id: ItemId, s: ItemStats, charges?: number, star = 1): string {
   const d = ITEMS[id];
   const parts: string[] = [];
   if (s.damage) parts.push(`урон ${num(s.damage)}`);
@@ -354,8 +388,10 @@ function statsLine(id: ItemId, s: ItemStats, charges?: number): string {
     const ch = s.selfDamageChance ?? 1;
     parts.push(`ранит героя на ${s.selfDamage}${ch < 1 ? ` (шанс ${Math.round(ch * 100)}%)` : ''}`);
   }
-  const aura = auraText(id);
+  const aura = auraText(id, star);
   if (aura) parts.push(aura);
+  if (d.parryPerk) parts.push(`основное оружие: ${PARRY_PERK_TEXT[d.parryPerk]}`);
+  if (d.parryShield) parts.push(`медлительность: предметы с уроном бьют на ${SHIELD_SLOW_BY_STAR[star - 1]} с реже`);
   if (d.mode === 'passive' && s.cooldown) parts.push(`раз в ${s.cooldown} с`);
   if (d.mode === 'active') parts.push(`зарядов: ${charges ?? s.charges} (кончатся — предмет исчезнет)`);
   else if (s.charges) parts.push(`срабатываний: ${charges ?? s.charges} (кончатся — предмет исчезнет)`);
@@ -368,12 +404,58 @@ export interface StatChip {
   value: string;
   hint: string;
   tag?: TagId;
+  /** Второй значок характеристики (перк парирования: «парирование» + эффект). */
+  icon2?: StatIconId;
   /** Во всю ширину карточки (аура — длинная). */
   wide?: boolean;
 }
 
+/** Как называется характеристика в сводке «было → станет». */
+const CHIP_NAMES: Partial<Record<StatIconId, string>> = {
+  damage: 'урон',
+  heal: 'лечение',
+  block: 'блок',
+  stun: 'оглушение',
+  buff: 'урон оружия',
+  duration: 'длительность',
+  aura: 'аура',
+  cooldown: 'перезарядка',
+  charges: 'заряды',
+  slow: 'медлительность',
+  self: 'урон себе',
+};
+
+/**
+ * Пара для каждого значка after в before: тот же значок, тот же тег и тот же по счёту среди таких
+ * (у щита два значка-щита — блок и щит-курсор; их нельзя путать).
+ */
+export function matchChips(before: StatChip[], after: StatChip[]): (StatChip | undefined)[] {
+  const seen = new Map<string, number>();
+  return after.map((a) => {
+    const key = `${a.icon}|${a.tag ?? ''}|${a.icon2 ?? ''}`;
+    const n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    return before.filter((b) => b.icon === a.icon && b.tag === a.tag && b.icon2 === a.icon2)[n];
+  });
+}
+
+/** Что изменится у предмета: «урон 6 → 9.6 · заряды 3 → 5» (только изменившиеся значки). */
+export function chipsDiff(
+  before: StatChip[],
+  after: StatChip[],
+): { icon: StatIconId; tag?: TagId; name: string; was: string; now: string }[] {
+  const pairs = matchChips(before, after);
+  const out: { icon: StatIconId; tag?: TagId; name: string; was: string; now: string }[] = [];
+  after.forEach((a, i) => {
+    const b = pairs[i];
+    if (b && b.value === a.value) return;
+    out.push({ icon: a.icon, tag: a.tag, name: CHIP_NAMES[a.icon] ?? a.icon, was: b?.value ?? '—', now: a.value });
+  });
+  return out;
+}
+
 /** Характеристики предмета значками: сначала эффект, потом побочка и аура, в конце — перезарядка или заряды. */
-export function itemStatChips(id: ItemId, s: ItemStats = ITEM_STATS[id], charges?: number): StatChip[] {
+export function itemStatChips(id: ItemId, s: ItemStats = ITEM_STATS[id], charges?: number, star = 1): StatChip[] {
   const d = ITEMS[id];
   const out: StatChip[] = [];
   if (s.damage) out.push({ icon: 'damage', value: num(s.damage), hint: `Урон врагу: ${num(s.damage)}` });
@@ -394,7 +476,41 @@ export function itemStatChips(id: ItemId, s: ItemStats = ITEM_STATS[id], charges
       hint: `Ранит героя на ${num(s.selfDamage)}${ch < 1 ? ` с шансом ${pct}%` : ''}`,
     });
   }
-  const aura = auraInfo(id);
+  // Перк основного оружия при парировании: значок «парирование» и значок эффекта.
+  if (d.parryPerk) {
+    const main = 'Если это основное оружие (двойной клик в сумках) — оно курсор в бою.';
+    const shield = d.parryPerk === 'shield';
+    const cut = Math.round((1 - (shield ? PARRY_PERK.shieldMult : PARRY_DAMAGE_MULT)) * 100);
+    out.push({ icon: 'parry', value: `−${cut}%`, hint: `${main} Парированный удар слабее на ${cut}%${shield ? ', отбивает вся область щита' : ''}.` });
+    if (d.parryPerk === 'dagger' && s.damage) {
+      out.push({ icon: 'parry', icon2: 'damage', value: num(s.damage), hint: `${main} За каждое парирование бьёт врага своим уроном (${num(s.damage)}).` });
+    } else if (d.parryPerk === 'torch') {
+      out.push({
+        icon: 'parry',
+        icon2: 'slow',
+        value: `враг +${PARRY_PERK.torchSlow} с`,
+        hint: `${main} Каждое парирование: все предметы врага перезаряжаются на ${PARRY_PERK.torchSlow} с дольше, до конца боя с ним (не больше +${PARRY_PERK.torchSlowMax} с).`,
+      });
+    } else if (d.parryPerk === 'axe') {
+      out.push({
+        icon: 'parry',
+        icon2: 'charges',
+        value: `${PARRY_PERK.axeCharges} → ×${PARRY_PERK.axeMult}`,
+        hint: `${main} Каждое парирование — заряд; на ${PARRY_PERK.axeCharges} зарядах следующий удар топора ×${PARRY_PERK.axeMult}. Заряды копятся весь день, но пропущенная атака врага их сжигает.`,
+      });
+    } else if (d.parryPerk === 'sickle') {
+      out.push({ icon: 'parry', icon2: 'heal', value: `+${PARRY_PERK.sickleHeal}`, hint: `${main} За каждое парирование лечит героя на ${PARRY_PERK.sickleHeal}.` });
+    }
+  }
+  if (d.parryShield) {
+    const slow = SHIELD_SLOW_BY_STAR[star - 1];
+    out.push({
+      icon: 'slow',
+      value: `+${slow} с`,
+      hint: `Медлительность (дебаф): твои предметы с уроном бьют на ${slow} с реже (★1 — ${SHIELD_SLOW_BY_STAR[0]} с, ★2 — ${SHIELD_SLOW_BY_STAR[1]} с, ★3 — ${SHIELD_SLOW_BY_STAR[2]} с; от нескольких щитов складывается).`,
+    });
+  }
+  const aura = auraInfo(id, star);
   if (aura) {
     const pct = `${aura.amount > 0 ? '+' : ''}${Math.round(aura.amount * 100)}%`;
     out.push({
@@ -547,6 +663,14 @@ export function conditionChips(scene: Phaser.Scene, id: ClientId, battleOnly = f
     });
   }
   if (c.noRetreat) out.push({ icon: statIconKey('noRetreat'), hint: 'Нельзя отступить на привале, пока этот заказ не выполнен.' });
+  if (c.parryReward) {
+    out.push({
+      icon: coinIconKey(scene),
+      value: `${fmtMult(PARRY_REWARD_MULT)} за ${Math.round(PARRY_REWARD_SHARE * 100)}%`,
+      color: C.good,
+      hint: `Отбей (парируй) ${Math.round(PARRY_REWARD_SHARE * 100)}% атак врагов этого заказа и больше — награда ${fmtMult(PARRY_REWARD_MULT)}.`,
+    });
+  }
   if (battleOnly) return out;
   const penalty = CLIENT_PENALTY_MULT[id];
   if (c.advance) {
@@ -596,6 +720,10 @@ export function enemyItemChips(scene: Phaser.Scene, id: EnemyItemId, mod: Modifi
           : `Замах ${s.cooldown} с перед ударом. Удар с уроном можно парировать, пока сжимается кольцо.`,
     });
   }
+  if (s.auraBoost) {
+    const pct = Math.round(s.auraBoost * 100);
+    out.push({ icon: statIconKey('aura'), value: `+${pct}%`, hint: `Аура: соседние предметы в сумке наносят урон и лечат на ${pct}% больше.` });
+  }
   if (s.charges) out.push({ icon: statIconKey('charges'), value: `${s.charges}`, hint: `Зарядов: ${s.charges} — кончатся, предмет больше не используется.` });
   return out;
 }
@@ -621,12 +749,12 @@ export function describeOwnedItem(it: OwnedItem, powers?: Map<number, ItemPower>
   const head = `${d.name}${star > 1 ? ` ★${star}` : ''} — ${CATEGORY_NAMES[d.category]}`;
   const p = it.inGrid ? powers?.get(it.uid) : undefined;
   const base = p?.base ?? starStats(it.id, star);
-  const lines = [head, `База: ${statsLine(it.id, base, it.charges)}`];
+  const lines = [head, `База: ${statsLine(it.id, base, it.charges, star)}`];
   if (!p) {
     if (!it.inGrid) lines.push('Вне сумок — в бою не участвует.');
     return lines.join('\n');
   }
-  if (p.received.some((e) => e.rule.effect.kind === 'boost')) lines.push(`Итог: ${statsLine(it.id, p.final, it.charges)}`);
+  if (p.received.some((e) => e.rule.effect.kind === 'boost')) lines.push(`Итог: ${statsLine(it.id, p.final, it.charges, star)}`);
   for (const e of p.received) {
     const src = items.find((i) => i.uid === e.source);
     lines.push(`   ${src ? ITEMS[src.id].name : '?'} (${e.rule.title}): ${e.label}`);
@@ -660,6 +788,7 @@ export function describeEnemyItem(id: EnemyItemId, mod: ModifierId | null = null
   if (s.heal) parts.push(`лечение ${Math.round(s.heal * m)}`);
   if (s.healBelow) parts.push(`когда здоровье ниже ${Math.round(s.healBelow * 100)}%`);
   if (s.stealCoins) parts.push(`крадёт ${s.stealCoins} мон. из награды при каждом ударе`);
+  if (s.auraBoost) parts.push(`аура: соседние предметы +${Math.round(s.auraBoost * 100)}% к урону и лечению`);
   if (s.cooldown) parts.push(d.mode === 'passive' ? `раз в ${s.cooldown} с` : `${s.cooldown} с на замах`);
   if (s.charges) parts.push(`зарядов: ${s.charges}`);
   return parts.join(' · ');

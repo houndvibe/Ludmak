@@ -3,7 +3,7 @@
 // Новый предмет/враг/заказчик в src/data автоматически попадает в манифест.
 import { CLIENT_IDS, CLIENTS, type ClientId } from "../data/clients";
 import { ENEMIES, ENEMY_IDS, type EnemyId } from "../data/enemies";
-import { ENEMY_ITEM_IDS, type EnemyItemId } from "../data/enemyItems";
+import { ENEMY_ITEM_IDS, ENEMY_ITEMS, type EnemyItemId } from "../data/enemyItems";
 import { CATEGORY_IDS, ITEM_IDS, type ItemCategory, type ItemId } from "../data/items";
 import { TAG_IDS, type TagId } from "../data/tags";
 
@@ -37,7 +37,9 @@ export type StatIconId =
   | "contracts"
   | "noRetreat"
   | "advance"
-  | "monster";
+  | "monster"
+  | "slow"
+  | "parry";
 export const STAT_ICON_IDS: StatIconId[] = [
   "damage",
   "heal",
@@ -55,6 +57,8 @@ export const STAT_ICON_IDS: StatIconId[] = [
   "noRetreat",
   "advance",
   "monster",
+  "slow",
+  "parry",
 ];
 
 export type StubSpec =
@@ -66,6 +70,7 @@ export type StubSpec =
   | { kind: "category"; category: ItemCategory }
   | { kind: "link" }
   | { kind: "home" }
+  | { kind: "shop" }
   | { kind: "background"; label: string; w: number; h: number; color: string };
 
 export interface AssetEntry {
@@ -102,6 +107,15 @@ export const categoryKey = (id: ItemCategory) => `icon_category_${id}`;
  * Шапка: бесшовная по горизонтали картинка; band — полоса балки на ней (px картинки), повторяется по ширине экрана.
  */
 export type ButtonState = "normal" | "hover" | "disabled";
+/** Отбивающая часть курсора-оружия: точки на картинке (доли), наклон в покое и высота на экране. */
+export interface CursorBlade {
+  tip: { x: number; y: number };
+  bladeEnd: { x: number; y: number };
+  grip: { x: number; y: number };
+  angle: number;
+  size: number;
+}
+
 export const UI_ART = {
   button: {
     normal: { path: "ui/button.png", crop: { x: 22, y: 165, w: 2126, h: 394 } },
@@ -112,18 +126,23 @@ export const UI_ART = {
   slice: { x: 0.38, y: 0.32 },
   header: { path: "ui/header.png", band: { y: 571, h: 128 } },
   /**
-   * Меч-курсор в зоне атак (бой) — картинка предмета героя (items/steel_sword.png, клинок вверх). Доли ширины и высоты картинки:
-   * tip — кончик (в покое ровно на курсоре), grip — рукоять (вокруг неё взмах), bladeEnd — где кончается лезвие и начинается
-   * рукоять: отбивает только отрезок tip → bladeEnd (у меча — верхние ~2/3), рукоятью отбить нельзя. angle — наклон в покое, градусы.
-   * Другое оружие для отбивания — другая картинка и свои точки.
+   * Курсор основного оружия в зоне атак (бой) — картинка предмета героя. Доли ширины и высоты картинки:
+   * tip — кончик (в покое ровно на курсоре), grip — рукоять (вокруг неё взмах), bladeEnd — до куда отбивает: отрезок
+   * tip → bladeEnd (меч — весь клинок, кинжал — клинок, факел — вся длина, топор — лезвие-голова). angle — наклон в покое,
+   * градусы; size — высота картинки на экране, px. Щит — отдельно (cursorShield): отбивает всей областью.
    */
-  cursorSword: {
-    item: "steel_sword" as const,
-    tip: { x: 0.49, y: 0.02 },
-    bladeEnd: { x: 0.5, y: 0.68 },
-    grip: { x: 0.5, y: 0.83 },
-    angle: -40,
-  },
+  cursorWeapons: {
+    steel_sword: { tip: { x: 0.49, y: 0.02 }, bladeEnd: { x: 0.5, y: 0.72 }, grip: { x: 0.5, y: 0.83 }, angle: -40, size: 150 },
+    silver_dagger: { tip: { x: 0.5, y: 0.04 }, bladeEnd: { x: 0.5, y: 0.53 }, grip: { x: 0.5, y: 0.78 }, angle: -40, size: 110 },
+    torch: { tip: { x: 0.4, y: 0.03 }, bladeEnd: { x: 0.47, y: 0.97 }, grip: { x: 0.47, y: 0.85 }, angle: -35, size: 140 },
+    cursed_axe: { tip: { x: 0.06, y: 0.42 }, bladeEnd: { x: 0.5, y: 0.7 }, grip: { x: 0.86, y: 0.78 }, angle: 0, size: 150 },
+    rusty_sickle: { tip: { x: 0.12, y: 0.04 }, bladeEnd: { x: 0.55, y: 0.6 }, grip: { x: 0.42, y: 0.86 }, angle: -20, size: 130 },
+  } as Partial<Record<ItemId, CursorBlade>>,
+  /**
+   * Щит-курсор (предмет с parryShield в рюкзаке): картинка предмета, центр — на курсоре. Размер — FEEL.parry.shieldSize,
+   * парирует круг радиусом shieldSize/2 × hitShare (атака засчитана, если её круг касается этого круга).
+   */
+  cursorShield: { hitShare: 0.9 },
   /** Значки: сердце (жизнь есть / потеряна) и монета. crop — без прозрачных полей; Boot уменьшает до iconHeight px. */
   icons: {
     heart_full: { path: "ui/heart_full.png", crop: { x: 100, y: 160, w: 1036, h: 986 } },
@@ -133,7 +152,23 @@ export const UI_ART = {
   iconHeight: 96,
   /** Пергамент карточки заказа (дом); Boot уменьшает его ровно до HOME_LAYOUT.card. pad — поля текста от края (px карточки). */
   parchment: { path: "ui/contract_parchment.png", crop: { x: 8, y: 20, w: 1110, h: 1364 }, pad: { x: 40, top: 40, bottom: 34 } },
+  /**
+   * Карточка товара в магазине: plain — обычный предмет, rare — редкий и особый (вместо синей рамки). Boot уменьшает
+   * картинку целиком до w×h. Раскладка внутри (px карточки) — под нарисованное: pad — поле значка типа и формы от угла,
+   * iconY / iconSize — центр и размер картинки предмета, nameY — центр имени, pillsY — верх плашек тегов,
+   * chipsY / chipH — первый ряд характеристик: ровно в двух нарисованных ячейках (там свой фон не рисуется), следующие ряды — ниже.
+   * Нет картинки — карточка рисуется кодом с раскладкой fallback.
+   */
+  shopCard: {
+    w: 320,
+    h: 422,
+    plain: { path: "ui/shop_card.webp", pad: 24, iconY: 128, iconSize: 140, nameY: 228, pillsY: 255, chipsY: 299, chipH: 38 },
+    rare: { path: "ui/shop_card_rare.webp", pad: 30, iconY: 112, iconSize: 136, nameY: 190, pillsY: 213, chipsY: 253, chipH: 41 },
+    fallback: { pad: 16, iconY: 100, iconSize: 150, nameY: 192, pillsY: 222, chipsY: 266, chipH: 44 },
+  },
 };
+export type ShopCardStyle = "plain" | "rare";
+export const uiShopCardKey = (s: ShopCardStyle) => `ui_shop_card_${s}`;
 export type UiIconId = "heart_full" | "heart_broken" | "coin";
 export const uiIconKey = (id: UiIconId) => `ui_icon_${id}`;
 export const UI_PARCHMENT_KEY = "ui_parchment";
@@ -231,6 +266,16 @@ export const HOME_LAYOUT = {
   portraitWidth: 268,
   /** Карточка заказа рядом с окошком. */
   card: { x: 1190, y: 240, w: 455, h: 560 },
+  /**
+   * Печать «Принято» на карточке заказа (ui/seal_stamp.png): центр — доля ширины и высоты карточки (правый нижний угол,
+   * поверх «Награда / Неустойка»), размер — доля ширины карточки.
+   */
+  stamp: { x: 0.74, y: 0.8, size: 0.36 },
+  /**
+   * Письмо о ведьмаке (ночь 1, поверх всего): центр и размер пергамента (UI_ART.parchment, растянут), поля текста,
+   * размер шрифта, кнопка «Прочитано» — центр по вертикали от верха пергамента.
+   */
+  letter: { x: 960, y: 560, w: 640, h: 790, padX: 64, top: 70, size: 26, buttonY: 700 },
   /** Прилавок/сундук — кнопка «Магазин». */
   shop: { x: 89, y: 637, w: 596, h: 389 },
   /** Седельные сумки на крюке — кнопка «Сумки». */
@@ -245,18 +290,69 @@ export const HEADER_LAYOUT = {
 };
 
 /**
- * Меню на фоне backgrounds/menu.jpg (логотип по центру: примерно x 480–1460, y 410–620). Кнопки — центр и размер.
- * Две главные кнопки под логотипом; «Пропустить обучение» — маленькая, ниже (видна, пока обучение не пройдено).
+ * Главное меню (по макету художницы): фон — лес (backgrounds/menu.webp), по центру логотип (MENU_ART.logo), под ним
+ * «НАЧАТЬ ОХОТУ» и меньше — «ПРОПУСТИТЬ ОБУЧЕНИЕ» (видна, пока обучение не пройдено); справа внизу громкость.
+ * Логотип — центр и ширина (высота по пропорции); кнопки — центр и размер; громкость — левый край дорожки, длина,
+ * центр по вертикали, подпись — над дорожкой (labelY). Галочка Debug — слева внизу (только для разработки).
  */
 export const MENU_LAYOUT = {
-  start: { x: 960, y: 735, w: 460, h: 84 },
-  exit: { x: 960, y: 835, w: 460, h: 84 },
-  skipTutorial: { x: 960, y: 960, w: 300, h: 48 },
-  /** Ползунок громкости справа внизу: левый край дорожки, её длина, центр по вертикали; подпись — над дорожкой. */
-  volume: { x: 1440, y: 975, w: 400 },
-  /** Галочка «Debug» под ползунком: центр квадратика (подпись — справа) и размер квадратика. */
-  debug: { x: 1454, y: 1040, size: 28 },
+  logo: { x: 960, y: 345, w: 966 },
+  start: { x: 955, y: 661, w: 503, h: 101 },
+  skipTutorial: { x: 956, y: 780, w: 387, h: 75 },
+  volume: { x: 1472, y: 1005, w: 360, labelY: 972 },
+  debug: { x: 40, y: 1046, size: 24 },
 };
+
+/**
+ * Оформление меню: кнопка (рамка растягивается с неподвижными углами: slice — ширина угла в px картинки), логотип,
+ * ползунок громкости — дорожка, заливка (обрезается по громкости) и ромбы на концах — всё в одном масштабе по обеим осям
+ * (дорожка вписывается в длину ползунка). textColor — цвет надписей меню. Нет картинки — обычная кнопка и ползунок, логотип — текстом.
+ */
+export const MENU_ART = {
+  button: { path: "ui/menu/button.png", slice: 46 },
+  /** Логотип без осколков (их вырезали из ui/menu/logo.png — осколки летают отдельно, shards). */
+  logo: { path: "ui/menu/logo_clean.png" },
+  sliderTrack: { path: "ui/menu/slider_track.png" },
+  sliderFill: { path: "ui/menu/slider_fill.png" },
+  sliderEnds: { path: "ui/menu/slider_ends.png" },
+  /**
+   * Глаза в лесу (вырезаны из варианта фона художницы): картинка и центр в пикселях исходного фона (2000×1125) —
+   * в игре масштабируются вместе с фоном. Моргают и иногда пропадают (FEEL.menuLife.eyes).
+   */
+  eyes: [
+    { path: "ui/menu/eyes_0.png", x: 82, y: 384 },
+    { path: "ui/menu/eyes_1.png", x: 692, y: 227 },
+    { path: "ui/menu/eyes_2.png", x: 1552, y: 468 },
+    { path: "ui/menu/eyes_3.png", x: 1918, y: 240 },
+  ],
+  /** Печать на логотипе (доля ширины и высоты картинки логотипа) — за ней светит свечение. */
+  seal: { x: 0.497, y: 0.62 },
+  /**
+   * Осколки печати (ui/menu/seal_shards.png художницы, разрезан на shard_N.png): центр каждого в пикселях картинки
+   * логотипа (1289×689) — там, где он нарисован; в меню парят вокруг этого места (FEEL.menuLife.shards).
+   */
+  shards: [
+    { x: 619, y: 13.5 },
+    { x: 605.5, y: 144 },
+    { x: 583.5, y: 223.5 },
+    { x: 534.5, y: 258 },
+    { x: 867.5, y: 616 },
+    { x: 743.5, y: 638.5 },
+    { x: 422.5, y: 636.5 },
+    { x: 773, y: 669 },
+  ],
+  textColor: "#e8354f",
+  /** Кегль надписи «НАЧАТЬ ОХОТУ», px экрана 1920×1080 (в макете 2560 px шириной это 72). */
+  startFont: 54,
+};
+export type MenuArtId = "button" | "logo" | "sliderTrack" | "sliderFill" | "sliderEnds";
+export const menuArtKey = (id: MenuArtId) => `ui_menu_${id}`;
+export const menuEyesKey = (n: number) => `ui_menu_eyes_${n}`;
+export const menuShardKey = (n: number) => `ui_menu_shard_${n}`;
+
+/** Печать «Принято» на заказе (дом): картинка художницы. */
+export const SEAL_STAMP_KEY = "ui_seal_stamp";
+export const SEAL_STAMP_PATH = "ui/seal_stamp.png";
 
 /** Фон меню: логотип «Людьмак» на тёмной доске. */
 /**
@@ -287,17 +383,19 @@ export const FONT_FILES: FontFile[] = [
 export const BG_MENU_KEY = "bg_menu";
 
 /**
- * Всплывающее окно врага (наведение на врага в заказе): ширина, поля, ширина портрета (высота — по пропорции 4:5),
- * промежуток между колонками, клетка сумки, высота полоски здоровья, высота строки описания предмета внизу.
+ * Всплывающее окно врага (наведение на врага в заказе): поля, ширина портрета (высота — по пропорции 4:5), промежуток
+ * между колонками, клетка сумки, высота полоски здоровья, наименьшая ширина колонки сумки. Ширина окна — по содержимому.
+ * card — карточка предмета врага при наведении на него в сумке: картинка обычной карточки магазина (UI_ART.shopCard.plain)
+ * в масштабе scale, сбоку от окна с зазором gap.
  */
 export const ENEMY_TOOLTIP_LAYOUT = {
-  w: 560,
   pad: 20,
   portraitW: 180,
   colGap: 28,
   cell: 60,
   hpH: 30,
-  infoH: 72,
+  minBagW: 150,
+  card: { scale: 0.75, gap: 10 },
 };
 
 /**
@@ -332,6 +430,8 @@ export const BACKPACK_LAYOUT = {
    * Не влезло — вещи листаются страницами.
    */
   stash: { x: 1257, y: 677, w: 529, h: 152, cell: 64 },
+  /** Поле «Основное оружие» — слева от верхнего ряда сумок (над левой сумкой): левый верхний угол, размер, подпись над ним. */
+  mainSlot: { x: 205, y: 300, size: 110, labelY: 282 },
   /** Подпись «Вне сумок…» — по центру внутренней доски крышки сундука. */
   stashTitle: { x: 1521, y: 545 },
   /** Стрелки страниц «вне сумок» и номер страницы (по центру) — на крышке сундука под подписью. */
@@ -352,8 +452,42 @@ export const BACKPACK_LAYOUT = {
 export const BG_BACKPACK_KEY = "bg_backpack";
 
 /**
+ * Раскладка магазина в координатах 1920×1080 — под рисунок backgrounds/shop.webp (лавка нечисти под сундуком).
+ * Слева прилавок с товарами, посередине торговец (только на рисунке), справа мешок с твоими вещами.
+ * Нет картинки — заглушка рисует эти же зоны. Перерисовали фон — поправьте числа, код трогать не нужно.
+ */
+export const SHOP_LAYOUT = {
+  /** Строка «Заказы на день»: левый край и верх. */
+  orders: { x: 44, y: 96 },
+  /** Прилавок: сюда отпускают свою вещь, чтобы продать (подсвечивается при перетаскивании). */
+  counter: { x: 16, y: 134, w: 880, h: 860 },
+  /**
+   * Карточки товаров на прилавке: левый верхний угол первой, масштаб картинки карточки (UI_ART.shopCard),
+   * промежутки, сколько в ряду (неполный последний ряд — по центру).
+   */
+  cards: { x: 44, y: 148, scale: 0.85, gapX: 20, gapY: 16, perRow: 3 },
+  /** Кнопка «Обновить ассортимент» (в дебаге — листание товаров): центр и размер. Подсказка «как купить» — правее неё. */
+  reroll: { x: 304, y: 1036, w: 520, h: 70 },
+  hint: { x: 742, y: 1036 },
+  /** Торговец — только на рисунке (заглушка рисует силуэт). */
+  merchant: { x: 900, y: 134, w: 316, h: 860 },
+  /** Мешок с твоими вещами: сюда отпускают товар, чтобы купить. Подпись — у верхнего края. */
+  bag: { x: 1217, y: 280, w: 678, h: 752 },
+  bagTitleY: 236,
+  /** Плитки вещей в мешке (2 в ряд — по ширине горловины): левый верхний угол первой, размер, промежуток, в ряду, рядов на странице. */
+  tiles: { x: 1364, y: 360, w: 220, h: 104, gap: 10, perRow: 2, rows: 5 },
+  /** Стрелки страниц вещей и номер страницы (по центру) — внизу мешка. */
+  bagNav: { prevX: 1420, nextX: 1760, pageX: 1590, y: 960, w: 90, h: 44 },
+  /** Кнопка «← Домой» — под мешком: центр и размер. */
+  home: { x: 1590, y: 1036, w: 520, h: 70 },
+};
+
+/** Фон магазина: прилавок, торговец, мешок. Зоны — в SHOP_LAYOUT. */
+export const BG_SHOP_KEY = "bg_shop";
+
+/**
  * Раскладка экрана боя. Рюкзак героя (маска 8×5) и самая большая сумка врага должны помещаться без наложений:
- * при cell 90 рюкзак героя — 720×450 (x 100…820), сумка 3×4 — 270×360 (x 1550…1820).
+ * при cell 90 рюкзак героя — 720×450 (x 100…820), сумка ведьмака 3×5 — 270×450 (x 1550…1820, y 470…920).
  */
 export const BATTLE_LAYOUT = {
   /** Размер клетки обеих сеток в бою, px. */
@@ -377,8 +511,8 @@ export const BATTLE_LAYOUT = {
   enemyNameMaxW: 440,
   /** Плашка условия заказчика («Заказ лешего: лес не жечь») — между полосками здоровья. */
   conditionBanner: { x: 960, y: 205 },
-  /** Максимальная ширина плашки условия (px), чтобы не заезжать на полоски здоровья; длиннее — шрифт меньше. */
-  conditionMaxW: 470,
+  /** Максимальная ширина плашки условия (px), чтобы не заезжать на полоски здоровья и значки блока рядом с ними; длиннее — шрифт меньше. */
+  conditionMaxW: 380,
   /** Значок модификатора врага — центр, относительно правого верхнего угла портрета врага. */
   modifierBadge: { dx: -26, dy: 26, r: 24 },
   /** Кнопка «Без звука» в верхней полосе боя. */
@@ -391,8 +525,8 @@ export const BATTLE_LAYOUT = {
   infoBottom: 1032,
   /** Зона, где появляются картинки атак врага для парирования (левый верхний угол и размер): между сетками. */
   parryZone: { x: 880, y: 360, w: 560, h: 500 },
-  /** ВРЕМЕННО: все летящие атаки врага рисуются этой картинкой (хлеб), а не предметом врага. null — картинка предмета врага. */
-  parryIconOverride: itemKey("bread") as string | null,
+  /** Картинка всех летящих атак врага вместо предмета врага (для тестов); null — картинка самого предмета врага. */
+  parryIconOverride: null as string | null,
 };
 
 export const ASSET_MANIFEST: AssetEntry[] = [
@@ -416,9 +550,10 @@ export const ASSET_MANIFEST: AssetEntry[] = [
     path: `items/${id}.png`,
     stub: { kind: "item", itemId: id } as StubSpec,
   })),
+  // Предмет героя в руках врага (art) — та же картинка, что у героя.
   ...ENEMY_ITEM_IDS.map((id) => ({
     key: enemyItemKey(id),
-    path: `items/enemy/${id}.png`,
+    path: ENEMY_ITEMS[id].art ? `items/${ENEMY_ITEMS[id].art}.png` : `items/enemy/${id}.png`,
     stub: { kind: "enemyItem", itemId: id } as StubSpec,
   })),
   ...TAG_IDS.map((id) => ({
@@ -462,7 +597,7 @@ export const ASSET_MANIFEST: AssetEntry[] = [
   },
   {
     key: BG_MENU_KEY,
-    path: "backgrounds/menu.jpg",
+    path: "backgrounds/menu.webp",
     stub: { kind: "background", label: "menu", w: 1920, h: 1080, color: "#14121a" },
   },
   {
@@ -470,6 +605,7 @@ export const ASSET_MANIFEST: AssetEntry[] = [
     path: "backgrounds/backpack_room.webp",
     stub: { kind: "background", label: "backpack_room", w: 1920, h: 1080, color: "#1e1813" },
   },
+  { key: BG_SHOP_KEY, path: "backgrounds/shop.webp", stub: { kind: "shop" } },
   {
     key: BG_HORSE_KEY,
     path: HORSE_ART.path,

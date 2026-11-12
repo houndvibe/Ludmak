@@ -13,6 +13,8 @@ import {
   HERO_HP_BY_NIGHT,
   MODIFIER_STATS,
   PARRY_DAMAGE_MULT,
+  PARRY_PERK,
+  PARRY_REWARD_SHARE,
   type EnemyItemStats,
   type ItemStats,
 } from '../config/balance';
@@ -24,7 +26,7 @@ import { ITEMS, type ItemDef, type ItemId } from '../data/items';
 import { enemyName, type ModifierId } from '../data/modifiers';
 import type { OwnedItem, Placement } from './backpack';
 import type { Rng } from './random';
-import { computePower, matches, type AppliedEffect, type BlockRule, type ItemPower } from './synergy';
+import { computePower, matches, shieldSlow, type AppliedEffect, type BlockRule, type ItemPower } from './synergy';
 
 export interface ChainLink {
   enemy: EnemyId;
@@ -62,8 +64,12 @@ export interface EnemySlot extends Placement {
   stats: EnemyItemStats;
   /** Infinity — без ограничения зарядов. */
   charges: number;
-  /** Таймер пассивного предмета (щит). */
+  /** Таймер пассивного предмета (щит) и оружия со своей перезарядкой. */
   timer: number;
+  /** Бьёт по своей перезарядке, а не через общий таймер действий (оружие врага с parallelWeapons). */
+  own: boolean;
+  /** Прибавка от аур соседей (подкова ведьмака): урон и лечение × (1 + boost); уже в stats. */
+  boost: number;
 }
 
 export interface EnemyState {
@@ -83,6 +89,8 @@ export interface EnemyState {
   haste: number;
   /** Ещё увернётся от следующей бомбы (ведьмак — от первой). */
   dodgeBomb: boolean;
+  /** Факел героя: на столько секунд дольше перезаряжаются все его предметы (копится до конца боя с ним). */
+  torchSlow: number;
   slots: EnemySlot[];
   /** Слоты в порядке использования: priority, при равенстве — порядок в раскладке. */
   order: EnemySlot[];
@@ -104,6 +112,10 @@ export type BattleEvent =
   | { type: 'stun'; seconds: number }
   | { type: 'buff'; mult: number }
   | { type: 'onHit'; uid: number; steal: number }
+  /** Перки основного оружия: факел замедлил врага (итог, сек), топор набрал заряд, топор ударил двойным. */
+  | { type: 'torchSlow'; seconds: number }
+  | { type: 'axeCharge'; charges: number }
+  | { type: 'axeRelease'; uid: number }
   // Соседство
   | { type: 'burned'; uid: number; name: string; reason: string }
   | { type: 'enabled'; uid: number; name: string }
@@ -143,7 +155,49 @@ export interface BattleConfig {
   clients: ClientId[];
   night: number;
   rng?: Rng;
+  /** Здоровье героя в начале боя (финальный босс — сколько осталось после дня). Нет — полное. */
+  heroHp?: number;
+  /** Основное оружие (uid): курсор и перк парирования. Нет — парировать нельзя. */
+  mainUid?: number | null;
+  /** Заряды топора с прошлых боёв этого дня (финальный бой — после дня). */
+  axeCharges?: number;
 }
+
+/**
+ * Ауры в сумке врага: предмет с auraBoost усиливает урон и лечение предметов, касающихся его стороной клетки.
+ * Прибавки складываются; итог — сразу в stats слота, прибавка — в boost (для подсказки).
+ */
+function applyEnemyAuras(slots: EnemySlot[]): void {
+  const cells = (s: EnemySlot) => {
+    const w = s.rotated ? s.def.h : s.def.w;
+    const h = s.rotated ? s.def.w : s.def.h;
+    const out: [number, number][] = [];
+    for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) out.push([s.col + c, s.row + r]);
+    return out;
+  };
+  const owner = new Map<string, EnemySlot>();
+  for (const s of slots) for (const [c, r] of cells(s)) owner.set(`${c},${r}`, s);
+  for (const src of slots) {
+    const amount = src.stats.auraBoost;
+    if (!amount) continue;
+    const touched = new Set<EnemySlot>();
+    for (const [c, r] of cells(src)) {
+      for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const t = owner.get(`${c + dc},${r + dr}`);
+        if (t && t !== src) touched.add(t);
+      }
+    }
+    for (const t of touched) t.boost += amount;
+  }
+  for (const s of slots) {
+    if (!s.boost) continue;
+    if (s.stats.damage) s.stats.damage *= 1 + s.boost;
+    if (s.stats.heal) s.stats.heal *= 1 + s.boost;
+  }
+}
+
+/** Условие, когда у врага нет заказчика (финальный босс). */
+const NO_CONDITION: ClientCondition = { title: '' };
 
 export class BattleSim {
   readonly chain: ChainLink[];
@@ -168,6 +222,9 @@ export class BattleSim {
   /** Украдено из награды каждого заказа. */
   stolen: number[];
   status: BattleStatus = 'fight';
+  /** По каждому заказу: сколько атак врагов дошло до удара и сколько из них отбито (условие Безголового). */
+  attacks: number[];
+  parried: number[];
   /** Атаки текущего врага в полёте (окно парирования). Смерть врага их отменяет. */
   pending: PendingAttack[] = [];
   private nextPendingId = 1;
@@ -178,9 +235,13 @@ export class BattleSim {
     this.clients = cfg.clients;
     this.night = cfg.night;
     this.heroMaxHp = HERO_HP_BY_NIGHT[cfg.night - 1];
-    this.heroHp = this.heroMaxHp;
+    this.heroHp = Math.min(this.heroMaxHp, Math.max(1, cfg.heroHp ?? this.heroMaxHp));
+    this.mainUid = cfg.mainUid ?? null;
+    this.axeCharges = cfg.axeCharges ?? 0;
     this.rng = cfg.rng ?? Math.random;
     this.stolen = Array.from({ length: cfg.clients.length }, () => 0);
+    this.attacks = Array.from({ length: cfg.clients.length }, () => 0);
+    this.parried = Array.from({ length: cfg.clients.length }, () => 0);
     this.items = [...cfg.items];
     this.slots = this.items.map((item) => ({
       item,
@@ -195,14 +256,24 @@ export class BattleSim {
     this.explodeAtStart();
   }
 
-  /** Заказчик текущего врага. */
-  get client(): ClientId {
-    return this.clients[this.chain[this.index].contract];
+  /** Отбито ли не меньше PARRY_REWARD_SHARE атак врагов заказа k (атак не было — да). */
+  parryGoalMet(k: number): boolean {
+    return this.attacks[k] === 0 || this.parried[k] / this.attacks[k] >= PARRY_REWARD_SHARE;
+  }
+
+  /** Для итогов дня: выполнено ли условие на отбитые атаки по каждому заказу. */
+  get parryGoals(): boolean[] {
+    return this.clients.map((_, k) => this.parryGoalMet(k));
+  }
+
+  /** Заказчик текущего врага (null — у финального босса заказчика нет). */
+  get client(): ClientId | null {
+    return this.clients[this.chain[this.index].contract] ?? null;
   }
 
   /** Условие заказчика, которое действует сейчас (только на врагов его заказа). */
   get condition(): ClientCondition {
-    return CLIENTS[this.client].condition;
+    return this.client ? CLIENTS[this.client].condition : NO_CONDITION;
   }
 
   /**
@@ -213,6 +284,36 @@ export class BattleSim {
     const next = this.chain[this.defeated];
     if (!next) return null;
     return this.clients.slice(next.contract).find((c) => CLIENTS[c].condition.noRetreat) ?? null;
+  }
+
+  /**
+   * Щит-курсор: уровень лучшего работающего щита в рюкзаке (0 — щита нет или он отключён). Есть щит — атаки
+   * отбиваются им; медлительность (атаки предметов героя реже) — в computePower.
+   */
+  get shieldStar(): number {
+    let best = 0;
+    for (const s of this.slots) if (s.def.parryShield && !s.disabled) best = Math.max(best, s.item.star ?? 1);
+    return best;
+  }
+
+  /** Медлительность от щитов: на сколько секунд реже бьют предметы героя с уроном (сумма по работающим щитам). */
+  get slowSec(): number {
+    return shieldSlow(this.items, this.powers);
+  }
+
+  get slowed(): boolean {
+    return this.slowSec > 0;
+  }
+
+  /** Основное оружие (uid) — курсор и перк парирования. */
+  readonly mainUid: number | null;
+  /** Заряды топора за парирования (весь день); набрал PARRY_PERK.axeCharges — следующий удар топора двойной. */
+  axeCharges: number;
+
+  /** Основное оружие в бою, если оно есть и работает (не отключено). null — парировать нельзя. */
+  get mainSlot(): HeroSlot | null {
+    const s = this.slots.find((x) => x.item.uid === this.mainUid);
+    return s && !s.disabled && s.def.parryPerk ? s : null;
   }
 
   /** Пассивные предметы с перезарядкой (срабатывают сами). */
@@ -257,9 +358,9 @@ export class BattleSim {
    * Причина видна в подсказке предмета.
    */
   private blockRule(): BlockRule {
-    const client = CLIENTS[this.client];
-    const ban = client.condition.ban ?? [];
-    const reason = `${client.condition.title.toLowerCase()} (заказ ${client.genitive})`;
+    const client = this.client ? CLIENTS[this.client] : null;
+    const ban = client?.condition.ban ?? [];
+    const reason = client ? `${client.condition.title.toLowerCase()} (заказ ${client.genitive})` : '';
     const link = this.chain[this.index];
     const torch = link.mod === 'torchbearer';
     const torchReason = `сгорела — ${enemyName(link.enemy, link.mod).toLowerCase()}`;
@@ -327,20 +428,24 @@ export class BattleSim {
     const hp = Math.round(ENEMY_STATS[id].hp * power);
     const slots: EnemySlot[] = def.bag.map((b, i) => {
       const stats = ENEMY_ITEM_STATS[b.item];
+      const itemDef = ENEMY_ITEMS[b.item];
       return {
         uid: i,
         inGrid: true,
         col: b.col,
         row: b.row,
         rotated: b.rotated ?? false,
-        def: ENEMY_ITEMS[b.item],
-        stats,
+        def: itemDef,
+        stats: { ...stats },
         charges: stats.charges ?? Infinity,
         timer: 0,
+        own: !!def.parallelWeapons && itemDef.mode === 'action' && itemDef.category === 'weapon',
+        boost: 0,
       };
     });
+    applyEnemyAuras(slots);
     const order = [...slots].sort((a, b) => a.def.priority - b.def.priority || a.uid - b.uid);
-    this.enemy = { id, mod, power, hp, maxHp: hp, block: 0, actionTimer: 0, stun: 0, hitOnce: false, haste: 0, dodgeBomb: !!def.dodgeFirstBomb, slots, order };
+    this.enemy = { id, mod, power, hp, maxHp: hp, block: 0, actionTimer: 0, stun: 0, hitOnce: false, haste: 0, dodgeBomb: !!def.dodgeFirstBomb, torchSlow: 0, slots, order };
     for (const p of this.passives) p.timer = 0;
     this.recompute(initial);
   }
@@ -374,7 +479,14 @@ export class BattleSim {
       if (p.timer >= p.stats.cooldown) {
         p.timer -= p.stats.cooldown;
         this.events.push({ type: 'heroItem', uid: p.item.uid, name: p.def.name, active: false });
-        this.applyHero(p);
+        // Топор-основное с полными зарядами: этот удар двойной, заряды сгорают.
+        let mult = 1;
+        if (p.def.parryPerk === 'axe' && p.item.uid === this.mainUid && this.axeCharges >= PARRY_PERK.axeCharges) {
+          mult = PARRY_PERK.axeMult;
+          this.axeCharges = 0;
+          this.events.push({ type: 'axeRelease', uid: p.item.uid });
+        }
+        this.applyHero(p, mult);
         if (Number.isFinite(p.charges)) this.spendHeroCharge(p); // хлеб съедается
         if (this.checkEnd()) return;
       }
@@ -387,17 +499,18 @@ export class BattleSim {
       return;
     }
     for (const s of e.slots) {
-      if (s.def.mode !== 'passive' || s.charges <= 0) continue;
+      // Щит — сам по перезарядке; оружие врага с parallelWeapons — тоже, каждое своё.
+      if ((s.def.mode !== 'passive' && !s.own) || s.charges <= 0) continue;
       s.timer += dt;
-      if (s.timer >= s.stats.cooldown!) {
-        s.timer -= s.stats.cooldown!;
+      if (s.timer >= s.stats.cooldown! + e.torchSlow) {
+        s.timer -= s.stats.cooldown! + e.torchSlow;
         this.useEnemyItem(s);
       }
     }
     const next = this.nextAction();
     if (next) {
       e.actionTimer += dt * (e.haste > 0 ? MODIFIER_STATS.lightSleeperSpeed : 1);
-      if (e.actionTimer >= next.stats.cooldown!) {
+      if (e.actionTimer >= next.stats.cooldown! + e.torchSlow) {
         e.actionTimer = 0;
         this.useEnemyItem(next);
         this.checkEnd();
@@ -410,10 +523,36 @@ export class BattleSim {
   /** Игрок нажал картинку атаки: удар приходит сразу, ослабленный (PARRY_DAMAGE_MULT), и не крадёт монеты. */
   parry(id: number): boolean {
     const p = this.pending.find((a) => a.id === id);
-    if (!p || this.status !== 'fight') return false;
-    this.strike(p, true);
+    const main = this.mainSlot;
+    if (!p || !main || this.status !== 'fight') return false;
+    const perk = main.def.parryPerk!;
+    this.strike(p, true, perk === 'shield' ? PARRY_PERK.shieldMult : PARRY_DAMAGE_MULT);
+    if (this.status === 'fight') this.parryPerk(main);
     this.checkEnd();
     return true;
+  }
+
+  /** Перк основного оружия после парирования. */
+  private parryPerk(main: HeroSlot): void {
+    const perk = main.def.parryPerk;
+    if (perk === 'dagger' && main.stats.damage) {
+      // Кинжал отвечает своим уроном (итог с соседями, бафф масла, сопротивление врага).
+      const mult = this.weaponBuff.mult;
+      const resist = this.resistMult(main.def);
+      this.events.push({ type: 'heroItem', uid: main.item.uid, name: main.def.name, active: false });
+      this.damageEnemy(Math.round(main.stats.damage * mult * resist), mult > 1, resist < 1, main.def.id);
+    } else if (perk === 'torch') {
+      const e = this.enemy;
+      e.torchSlow = Math.min(PARRY_PERK.torchSlowMax, Math.round((e.torchSlow + PARRY_PERK.torchSlow) * 10) / 10);
+      this.events.push({ type: 'torchSlow', seconds: e.torchSlow });
+    } else if (perk === 'axe') {
+      this.axeCharges = Math.min(PARRY_PERK.axeCharges, this.axeCharges + 1);
+      this.events.push({ type: 'axeCharge', charges: this.axeCharges });
+    } else if (perk === 'sickle') {
+      const amount = Math.min(PARRY_PERK.sickleHeal, this.heroMaxHp - this.heroHp);
+      this.heroHp += amount;
+      this.events.push({ type: 'heroHeal', amount });
+    }
   }
 
   /** Применить активный предмет героя. false — нельзя (не бой, отключён, нет зарядов, не активный). */
@@ -442,7 +581,7 @@ export class BattleSim {
     }
   }
 
-  private applyHero(slot: HeroSlot): void {
+  private applyHero(slot: HeroSlot, extraMult = 1): void {
     const { def, stats: s } = slot;
     // Ведьмак уворачивается от первой бомбы: заряд тратится (это делает useActive), эффекта нет.
     if (def.tags.includes('bomb') && this.enemy.dodgeBomb) {
@@ -451,7 +590,7 @@ export class BattleSim {
       return;
     }
     if (s.damage) {
-      const mult = def.category === 'weapon' ? this.weaponBuff.mult : 1;
+      const mult = (def.category === 'weapon' ? this.weaponBuff.mult : 1) * extraMult;
       const resist = this.resistMult(def);
       this.damageEnemy(Math.round(s.damage * mult * resist), mult > 1, resist < 1, def.id);
     }
@@ -516,7 +655,7 @@ export class BattleSim {
     const e = this.enemy;
     return (
       e.order.find(
-        (s) => s.def.mode === 'action' && s.charges > 0 && (!s.stats.healBelow || e.hp / e.maxHp < s.stats.healBelow),
+        (s) => s.def.mode === 'action' && !s.own && s.charges > 0 && (!s.stats.healBelow || e.hp / e.maxHp < s.stats.healBelow),
       ) ?? null
     );
   }
@@ -549,9 +688,14 @@ export class BattleSim {
   }
 
   /** Удар атаки в полёте: полный или парированный. Пьяный бросает кубик на промах в момент удара. */
-  private strike(p: PendingAttack, parried: boolean): void {
+  private strike(p: PendingAttack, parried: boolean, parryMult = PARRY_DAMAGE_MULT): void {
     this.pending = this.pending.filter((a) => a !== p);
     this.events.push({ type: 'strike', id: p.id, parried });
+    const k = this.chain[this.index].contract;
+    if (k < this.attacks.length) {
+      this.attacks[k]++;
+      if (parried) this.parried[k]++;
+    }
     const e = this.enemy;
     const s = p.slot.stats;
     if (e.mod === 'drunk' && this.rng() < MODIFIER_STATS.drunkMiss) {
@@ -559,7 +703,12 @@ export class BattleSim {
       this.events.push({ type: 'enemyMiss', name: p.slot.def.name });
       return;
     }
-    const dmg = (s.damage ?? 0) * e.power * enemyDamageMult(e.mod) * (s.monsterMult ?? 1) * (parried ? PARRY_DAMAGE_MULT : 1);
+    const dmg = (s.damage ?? 0) * e.power * enemyDamageMult(e.mod) * (s.monsterMult ?? 1) * (parried ? parryMult : 1);
+    // Топор-основное: пропущенная атака сжигает накопленные заряды.
+    if (!parried && this.axeCharges > 0 && this.mainSlot?.def.parryPerk === 'axe') {
+      this.axeCharges = 0;
+      this.events.push({ type: 'axeCharge', charges: 0 });
+    }
     const taken = this.damageHero(Math.round(dmg));
     if (taken > 0 && !parried) {
       // Мешок разбойника: крадёт при каждом прошедшем ударе; парированный удар не крадёт.

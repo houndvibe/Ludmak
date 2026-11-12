@@ -15,6 +15,9 @@
 // и здоровье героя на привалах.
 import {
   BALANCE_PARRY_RATE,
+  FINAL_BOSS,
+  PARRY_REWARD_MULT,
+  SHIELD_PARRY_BONUS,
   HERO_HP_BY_NIGHT,
   ITEM_STATS,
   NIGHTS,
@@ -111,6 +114,11 @@ function packRandom(build: BuildEntry[], rng: Rng): OwnedItem[] {
 type DayPlan = { chain: ChainLink[]; clients: ClientId[]; contracts?: Contract[] };
 
 interface DayResult {
+  /**
+   * Последняя ночь: бой с финальным боссом после дня. carried — победил со здоровьем, что осталось (null — днём погиб),
+   * full — победил с полным здоровьем (повторная попытка после смерти). Предметы — что осталось после дня.
+   */
+  final?: { carried: boolean | null; full: boolean };
   /** Здоровье в конце дня (0 — смерть). */
   hp: number;
   won: boolean;
@@ -129,6 +137,8 @@ interface BotRules {
   retreatBelow: number | null;
   /** Доля атак врага, которые бот парирует (0..1), сразу при замахе. Нет поля — BALANCE_PARRY_RATE. */
   parryRate?: number;
+  /** Прибавка к доле парирований, пока работает щит-курсор. Нет поля — SHIELD_PARRY_BONUS. */
+  shieldBonus?: number;
 }
 
 /** Учёт урона за много прогонов: по типам врагов, самоурон, лечение, здоровье на привалах. */
@@ -146,9 +156,23 @@ const newTrack = (): DamageTrack => ({ byEnemy: new Map(), self: 0, healed: 0, r
 /** Стоимость одного заряда предмета: цена всех вложенных копий / заряды на этом уровне. */
 const chargePrice = (id: ItemId, star: number) => (ITEM_STATS[id].price * 2 ** (star - 1)) / (maxCharges(id, star) ?? 1);
 
-function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng, rules?: BotRules, track?: DamageTrack, parryRng?: Rng): DayResult {
-  const sim = new BattleSim({ items, chain: plan.chain, clients: plan.clients, night, rng });
+function playDay(
+  items: OwnedItem[],
+  plan: DayPlan,
+  night: number,
+  rng: Rng,
+  rules?: BotRules,
+  track?: DamageTrack,
+  parryRng?: Rng,
+  heroHp?: number,
+  noFinal = false,
+): DayResult {
+  // Основное оружие бота: щит, если есть (щит-курсор), иначе стальной меч, иначе любое оружие с перком.
+  const pickMain = (id: ItemId) => items.find((i) => i.inGrid && i.id === id)?.uid;
+  const mainUid = pickMain('wooden_shield') ?? pickMain('steel_sword') ?? items.find((i) => i.inGrid && ITEMS[i.id].parryPerk)?.uid ?? null;
+  const sim = new BattleSim({ items, chain: plan.chain, clients: plan.clients, night, rng, heroHp, mainUid });
   const parryRate = rules?.parryRate ?? BALANCE_PARRY_RATE; // баланс — на «среднего игрока»
+  const shieldBonus = rules?.shieldBonus ?? SHIELD_PARRY_BONUS;
   let t = 0;
   let used = new Set<number>(); // какие небоевые расходники уже применены к текущему врагу
   let retreated = false;
@@ -198,7 +222,13 @@ function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng, rul
     sim.step(DT);
     for (const e of sim.drain()) {
       // Парирование: бот жмёт картинку сразу при замахе с вероятностью parryRate (своя случайность — бой не трогает).
-      if (e.type === 'windup' && parryRate > 0 && parryRng && parryRng() < parryRate) sim.parry(e.id);
+      // Щит-курсор в рюкзаке — парирует чаще на shieldBonus.
+      if (e.type === 'windup' && parryRate > 0 && parryRng) {
+        // Без основного оружия парировать нельзя; щит основным — парирует чаще на shieldBonus.
+        const main = sim.mainSlot;
+        const rate = !main ? 0 : main.def.parryPerk === 'shield' ? Math.min(1, parryRate + shieldBonus) : parryRate;
+        if (parryRng() < rate) sim.parry(e.id);
+      }
       if (!track) continue;
       if (e.type === 'heroHit') {
         if (e.self) track.self += e.taken;
@@ -224,7 +254,8 @@ function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng, rul
       const killed = Math.min(total, Math.max(0, defeated - start));
       start += total;
       if (killed >= total) {
-        income += Math.max(0, c.reward - sim.stolen[i]);
+        const bonus = CLIENTS[c.client].condition.parryReward && sim.parryGoalMet(i) ? PARRY_REWARD_MULT : 1;
+        income += Math.max(0, c.reward * bonus - sim.stolen[i]);
         done++;
       } else if (retreated) income -= Math.ceil((c.penalty * (total - killed)) / total);
       else income -= c.penalty;
@@ -239,7 +270,18 @@ function playDay(items: OwnedItem[], plan: DayPlan, night: number, rng: Rng, rul
     const left = sim.slots.find((s) => s.item.uid === it.uid)?.charges ?? 0;
     replacement += ((it.charges ?? max) - left) * chargePrice(it.id, it.star ?? 1);
   }
-  return { hp: won || retreated ? sim.heroHp : 0, won, income, replacement, retreated, done };
+  // Последняя ночь: после дня — финальный босс (с тем, что осталось в рюкзаке). Со здоровьем после дня и с полным.
+  let final: DayResult['final'];
+  if (night === NIGHTS && !noFinal) {
+    const left = sim.slots
+      .filter((s) => s.charges > 0)
+      .map((s) => ({ ...s.item, charges: Number.isFinite(s.charges) ? s.charges : s.item.charges }));
+    const boss: DayPlan = { chain: [{ enemy: FINAL_BOSS, contract: 0, mod: null }], clients: [] };
+    const fight = (hp?: number) => playDay(left.map((i) => ({ ...i })), boss, night, rng, { ...rules, retreatBelow: null }, undefined, parryRng, hp, true).won;
+    const alive = won || retreated;
+    final = { carried: alive ? fight(sim.heroHp) : null, full: fight() };
+  }
+  return { hp: won || retreated ? sim.heroHp : 0, won, income, replacement, retreated, done, final };
 }
 
 interface Stats {
@@ -253,6 +295,13 @@ interface Stats {
   /** Доля дней с отступлением, %, и выполненных заказов в среднем. */
   retreats: number;
   done: number;
+  /**
+   * Последняя ночь, финальный босс (%): dayDeath — днём погиб; finalCarried — победил босса со здоровьем после дня
+   * (среди дней без смерти); finalFull — победил с полным здоровьем. wins последней ночи = день без смерти и победа над боссом.
+   */
+  dayDeath: number;
+  finalCarried: number;
+  finalFull: number;
 }
 
 /** RUNS прогонов дня. naive — сборка раскладывается случайно в каждом прогоне. */
@@ -275,13 +324,25 @@ function simulate(
   let replacement = 0;
   let retreats = 0;
   let done = 0;
+  let dayDeaths = 0;
+  let carriedWins = 0;
+  let carriedTries = 0;
+  let fullWins = 0;
   const parryRng = seeded(seed * 104729 + 3);
   for (let i = 0; i < RUNS; i++) {
     const p = plan(rng);
     // Свежие копии предметов: заряды в каждом прогоне свои.
     const items = naive ? packRandom(build, layoutRng) : fixed.map((it) => ({ ...it }));
     const r = playDay(items, p, night, rng, rules, track, parryRng);
-    if (r.won) wins++;
+    if (r.final) {
+      if (r.final.carried === null) dayDeaths++;
+      else {
+        carriedTries++;
+        if (r.final.carried) carriedWins++;
+      }
+      if (r.final.full) fullWins++;
+      if (r.won && r.final.carried) wins++;
+    } else if (r.won) wins++;
     hps.push((r.hp / HERO_HP_BY_NIGHT[night - 1]) * 100);
     income += r.income;
     contracts += p.contracts?.length ?? 0;
@@ -299,6 +360,9 @@ function simulate(
     replacement: replacement / RUNS,
     retreats: (retreats / RUNS) * 100,
     done: done / RUNS,
+    dayDeath: (dayDeaths / RUNS) * 100,
+    finalCarried: carriedTries ? (carriedWins / carriedTries) * 100 : 0,
+    finalFull: (fullWins / RUNS) * 100,
   };
 }
 
@@ -426,7 +490,7 @@ for (let n = 1; n <= NIGHTS; n++) {
  * Шанс пройти забег: смертей меньше START_LIVES. deaths[n] — доля дней ночи n, закончившихся смертью (0..1).
  * Ночи считаются независимыми; потеря предмета после смерти не учитывается.
  */
-function runSurvival(deaths: number[]): number {
+function runSurvival(deaths: number[], last?: Stats): number {
   // dist[k] — вероятность k смертей к этому моменту (k ≥ START_LIVES — забег уже проигран, отдельно не ведём).
   let dist = [1];
   for (const p of deaths) {
@@ -437,7 +501,13 @@ function runSurvival(deaths: number[]): number {
     });
     dist = next;
   }
-  return dist.reduce((s, q) => s + q, 0) * 100;
+  if (!last) return dist.reduce((s, q) => s + q, 0) * 100;
+  // Последняя ночь — день и финальный босс: проиграл ему — −1 жизнь и попытка с полным здоровьем, пока есть жизни.
+  const pd = last.dayDeath / 100;
+  const wc = last.finalCarried / 100;
+  const wf = last.finalFull / 100;
+  const retry = (k: number) => (k >= START_LIVES ? 0 : 1 - Math.pow(1 - wf, START_LIVES - k));
+  return dist.reduce((s, q, k) => s + q * ((1 - pd) * (wc + (1 - wc) * retry(k + 1)) + pd * retry(k + 1)), 0) * 100;
 }
 
 // ─── Экономика ───────────────────────────────────────────────────────────────
@@ -458,8 +528,13 @@ for (let n = 1; n <= NIGHTS; n++) {
   );
   budget += free;
 }
-const survive = runSurvival([1, 2, 3, 4, 5].map((n) => (100 - meaningful[n].wins) / 100));
-console.log(`\n    Шанс пройти забег (меньше ${START_LIVES} смертей за ${NIGHTS} ночей, ночи независимы): ${survive.toFixed(0)}%   цель — 50–60%`);
+const survive = runSurvival([1, 2, 3, 4].map((n) => (100 - meaningful[n].wins) / 100), meaningful[NIGHTS]);
+const fin = meaningful[NIGHTS];
+console.log(
+  `\n    Ночь ${NIGHTS} и финальный босс: днём погиб ${fin.dayDeath.toFixed(0)}%, босс побеждён со здоровьем после дня ${fin.finalCarried.toFixed(0)}%` +
+    ` (среди выживших днём), с полным здоровьем ${fin.finalFull.toFixed(0)}%`,
+);
+console.log(`    Шанс пройти забег (победить босса, пока есть жизни; ночи независимы): ${survive.toFixed(0)}%   цель — 50–60%`);
 
 // ─── Условия и модификаторы по отдельности ───────────────────────────────────
 // День из заказов одного заказчика (враги без модификаторов) или из врагов с одним модификатором
@@ -577,18 +652,20 @@ const policies: { name: string; take: (n: number) => number; rules?: BotRules }[
   { name: 'на 1 меньше + отступить при <25%', take: (n) => levelForNight(n) - 1, rules: { retreatBelow: 0.25 } },
 ];
 console.log(`=== Бот-игрок: эталонная сборка, разные правила (${RUNS} прогонов) ===`);
-console.log('    Ячейка: заказов выполнено в среднем / доход / смерть% / отступил%. Последний столбец — шанс пройти забег.\n');
+console.log('    Ячейка: заказов выполнено в среднем / доход / смерть% / отступил%. Ночь 5 — смерть днём; финальный босс — в шансе пройти забег (последний столбец).\n');
 console.log(`  ${'Правило'.padEnd(36)}${[1, 2, 3, 4, 5].map((n) => `ночь ${n}`.padEnd(30)).join('')}Пройти забег`);
 for (const p of policies) {
   const deaths: number[] = [];
   const cells: string[] = [];
+  let last: Stats | undefined;
   for (let n = 1; n <= NIGHTS; n++) {
     const r = simulate(n, REF[n], queueDay(n, p.take(n), REF[n]), false, 1, p.rules);
-    const died = 100 - r.wins - r.retreats;
-    deaths.push(died / 100);
+    const died = n === NIGHTS ? r.dayDeath : 100 - r.wins - r.retreats;
+    if (n === NIGHTS) last = r;
+    else deaths.push(died / 100);
     cells.push(`${r.done.toFixed(1)} / ${pad(r.income.toFixed(0), 3)} / ${pad(died.toFixed(0), 2)}% / ${pad(r.retreats.toFixed(0), 2)}%`.padEnd(30));
   }
-  console.log(`  ${p.name.padEnd(36)}${cells.join('')}${runSurvival(deaths).toFixed(0)}%`);
+  console.log(`  ${p.name.padEnd(36)}${cells.join('')}${runSurvival(deaths, last).toFixed(0)}%`);
 }
 
 // ─── Парирование ─────────────────────────────────────────────────────────────
@@ -602,6 +679,27 @@ for (const rate of [0, 0.3, BALANCE_PARRY_RATE, 1]) {
     return `${short(r)} / ${pad(r.income.toFixed(0), 3)}`.padEnd(24);
   });
   console.log(`  ${`${Math.round(rate * 100)}%`.padEnd(12)}${cells.join('')}`);
+}
+
+// ─── Щит-курсор ──────────────────────────────────────────────────────────────
+// Сборки со щитом из «Альтернативных» при щите ★1 / ★2 / ★3 и разной прибавке к парированию (SHIELD_PARRY_BONUS —
+// оценка: щит бьёт всей областью, но окно короче). Сравнение — с эталоном той же ночи.
+
+const SHIELD_ALT: Record<number, BuildEntry[]> = { 3: ALT[3][0].build, 4: ALT[4][0].build, 5: ALT[5][0].build };
+const SHIELD_BONUSES = [0, 0.1, 0.2];
+console.log(`
+=== Щит-курсор: сборки со щитом, полный набор заказов, ${RUNS} прогонов (побед / медиана здоровья) ===`);
+console.log(`    Бот парирует ${Math.round(BALANCE_PARRY_RATE * 100)}% + прибавка, пока щит в рюкзаке; в игре сейчас прибавка ${SHIELD_PARRY_BONUS}.
+`);
+console.log(`  ${'Сборка'.padEnd(44)}${SHIELD_BONUSES.map((b) => `+${b}`.padEnd(16)).join('')}`);
+for (const n of [3, 4, 5]) {
+  console.log(`  ${`ночь ${n}  эталон`.padEnd(44)}${short(simulate(n, REF[n], queueDay(n, undefined, REF[n])))}`);
+  for (const star of [1, 2, 3]) {
+    const build = SHIELD_ALT[n].map((e) => (typeof e !== 'string' && e.id === 'wooden_shield' ? { ...e, star } : e));
+    const cells = SHIELD_BONUSES.map((b) => short(simulate(n, build, queueDay(n, undefined, build), false, 1, { retreatBelow: null, shieldBonus: b })).padEnd(16));
+    console.log(`  ${`ночь ${n}  ${ALT[n][0].name} ★${star}`.padEnd(44)}${cells.join('')}`);
+  }
+  console.log('');
 }
 
 // ─── Магазин: шанс увидеть нужное ────────────────────────────────────────────

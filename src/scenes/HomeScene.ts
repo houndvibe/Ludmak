@@ -1,13 +1,15 @@
 // Дом Людьмака — центральный экран ночи. Монстры по одному подходят к окошку в двери с заказами.
 // Пока очередь не закончилась, магазин, сумки и дверь закрыты.
 import * as Phaser from 'phaser';
-import { BG_HOME_CLOSED_KEY, BG_HOME_KEY, clientKey, HOME_LAYOUT, statIconKey, UI_ART, UI_PARCHMENT_KEY } from '../config/assets';
+import { BG_HOME_CLOSED_KEY, BG_HOME_KEY, clientKey, HOME_LAYOUT, menuShardKey, MENU_ART, SEAL_STAMP_KEY, statIconKey, UI_ART, UI_PARCHMENT_KEY } from '../config/assets';
 import { CLIENTS } from '../data/clients';
 import { ENEMIES } from '../data/enemies';
+import { THANKS_NOTE, WITCHER_LETTER } from '../data/story';
 import {
   currentVisitor,
   decideVisitor,
   heroLevel,
+  markLetterRead,
   queueDone,
   resolveNight,
   run,
@@ -76,6 +78,7 @@ export class HomeScene extends Phaser.Scene {
     this.hotspots = [];
     this.cardReady = false;
     this.queueShown = false;
+    this.stamping = false;
 
     addBackground(this, BG_HOME_KEY);
     this.refreshHeader = addHeader(this, 'Дом Людьмака');
@@ -112,7 +115,10 @@ export class HomeScene extends Phaser.Scene {
     this.tooltip = new EnemyTooltip(this);
 
     tutorialAttach(this, (id) => this.tutorialTarget(id));
-    if (queueDone()) {
+    if (run.night === 1 && !run.letterRead) this.showLetter();
+    if (run.finished) {
+      this.showEpilogue();
+    } else if (queueDone()) {
       this.showQueueOver();
     } else {
       // Пока идёт очередь, закрыта только дверь: в магазин и к сумкам можно сходить между посетителями
@@ -263,7 +269,65 @@ export class HomeScene extends Phaser.Scene {
     tutorialRefresh(this);
   }
 
+  /**
+   * Эпилог после победы над ведьмаком: окошко закрыто, дверь заперта, заказов нет; на месте карточки — записка
+   * с благодарностью и кнопкой «В меню». Магазин и сумки работают.
+   */
+  private showEpilogue(): void {
+    this.shutter.setY(this.shutterY);
+    this.setHotspotsEnabled(true);
+    this.hotspots[2].setEnabled(false);
+    this.card.removeAll(true);
+    const r = HOME_LAYOUT.card;
+    const p = this.cardPaper();
+    const width = r.w - 2 * p.px;
+    const title = addText(this, r.x + r.w / 2, r.y + p.top, THANKS_NOTE.title, 32, p.ink.accent, TITLE).setOrigin(0.5, 0);
+    const body = addText(this, r.x + p.px, title.y + title.height + 14, THANKS_NOTE.body, 24, p.ink.text, {
+      fontStyle: 'italic',
+      wordWrap: { width },
+      lineSpacing: 5,
+    });
+    const sign = addText(this, r.x + r.w - p.px, body.y + body.height + 12, THANKS_NOTE.signature, 24, p.ink.text, { fontStyle: 'italic' }).setOrigin(1, 0);
+    const btn = new Button(this, r.x + r.w / 2, r.y + r.h - p.bottom - 40, 260, 64, THANKS_NOTE.button, () => goto(this, 'Menu'), 28);
+    this.card.add([title, body, sign, btn]);
+  }
+
   // ─── Карточка заказа ─────────────────────────────────────────────────────
+
+  /**
+   * Письмо о ведьмаке в начале ночи 1: поверх всего (и обучения), остальное затемнено и не нажимается.
+   * «Прочитано» — письмо уходит, дальше ночь как обычно.
+   */
+  private showLetter(): void {
+    const Lt = HOME_LAYOUT.letter;
+    const cont = this.add.container(0, 0).setDepth(3000);
+    // Затемнение ловит клики — до прочтения ничего другого не нажать.
+    cont.add(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.72).setInteractive());
+    const left = Lt.x - Lt.w / 2;
+    const top = Lt.y - Lt.h / 2;
+    const paper = this.textures.exists(UI_PARCHMENT_KEY);
+    cont.add(
+      paper
+        ? this.add.image(Lt.x, Lt.y, UI_PARCHMENT_KEY).setDisplaySize(Lt.w, Lt.h)
+        : this.add.rectangle(Lt.x, Lt.y, Lt.w, Lt.h, C.panel, 0.95).setStrokeStyle(2, C.border),
+    );
+    const ink = paper ? C.ink : C.text;
+    const width = Lt.w - 2 * Lt.padX;
+    const title = addText(this, Lt.x, top + Lt.top, WITCHER_LETTER.title, Lt.size + 8, paper ? C.inkAccent : C.accent, TITLE).setOrigin(0.5, 0);
+    const body = addText(this, left + Lt.padX, title.y + title.height + 18, WITCHER_LETTER.body, Lt.size, ink, {
+      fontStyle: 'italic',
+      wordWrap: { width },
+      lineSpacing: 4,
+    });
+    const sign = addText(this, left + Lt.w - Lt.padX, body.y + body.height + 14, WITCHER_LETTER.signature, Lt.size, ink, { fontStyle: 'italic' }).setOrigin(1, 0);
+    const btn = new Button(this, Lt.x, top + Lt.buttonY, 320, 70, WITCHER_LETTER.button, () => {
+      markLetterRead();
+      this.tweens.add({ targets: cont, alpha: 0, duration: FEEL.fadeMs, onComplete: () => cont.destroy() });
+    }, 30);
+    cont.add([title, body, sign, btn]);
+    cont.setAlpha(0);
+    this.tweens.add({ targets: cont, alpha: 1, duration: FEEL.fadeMs });
+  }
 
   /**
    * Подложка карточки: пергамент художницы с тёмными чернилами, без картинки — тёмная панель со светлым текстом.
@@ -324,7 +388,7 @@ export class HomeScene extends Phaser.Scene {
     const name = add(addText(this, tx, r.y + p.top + 28, client.name, 40, k.accent, TITLE));
 
     const wrap = { wordWrap: { width: r.w - 2 * p.px } };
-    const line = add(addText(this, tx, name.y + name.height + 2, `«${client.line}»`, 22, k.text, { fontStyle: 'italic', ...wrap }));
+    const line = add(addText(this, tx, name.y + name.height + 2, `«${client.quests[c.quest]?.line ?? client.quests[0].line}»`, 22, k.text, { fontStyle: 'italic', ...wrap }));
     // Условие заказчика — под репликой: название словами, что оно делает — плашками с подсказками.
     let y = line.y + line.height + 12;
     const cond = add(addText(this, tx, y, `«${client.condition.title}»`, 22, k.accent, { fontStyle: 'bold', ...wrap }));
@@ -369,12 +433,17 @@ export class HomeScene extends Phaser.Scene {
     );
 
     const by = r.y + r.h + 55;
+    // Принять: на лист заказа падает печать, лист держится FEEL.stamp.holdMs — потом монстр уходит.
     const accept = () => {
-      sfx(this, 'contract_accept');
+      if (this.stamping) return;
+      this.stamping = true;
       tutorialDone(this, 'accept');
-      this.visitorLeaves(() => {
-        decideVisitor(true);
-        this.refreshHeader(); // аванс Кикиморы — монеты сразу
+      this.stampCard(() => {
+        this.stamping = false;
+        this.visitorLeaves(() => {
+          decideVisitor(true);
+          this.refreshHeader(); // аванс Кикиморы — монеты сразу
+        });
       });
     };
     if (c.enemies.some((e) => ENEMIES[e].boss)) {
@@ -390,10 +459,68 @@ export class HomeScene extends Phaser.Scene {
     add(new Button(this, r.x + r.w / 4, by, r.w / 2 - 16, 70, 'Принять', accept, 30));
     add(
       new Button(this, r.x + (3 * r.w) / 4, by, r.w / 2 - 16, 70, 'Отказать', () => {
+        if (this.stamping) return;
         sfx(this, 'contract_decline');
         this.visitorLeaves(() => decideVisitor(false));
       }, 30),
     );
+  }
+
+  /** Идёт печать на заказе: кнопки «Принять / Отказать» не нажимаются. */
+  private stamping = false;
+
+  /**
+   * Печать на карточке заказа: падает сверху с увеличения и наклоном, бьёт по бумаге (звук, карточка вздрагивает,
+   * разлетаются осколки печати), держится FEEL.stamp.holdMs — потом done().
+   */
+  private stampCard(done: () => void): void {
+    const F = FEEL.stamp;
+    const r = HOME_LAYOUT.card;
+    const S = HOME_LAYOUT.stamp;
+    if (!this.textures.exists(SEAL_STAMP_KEY)) {
+      sfx(this, 'contract_accept');
+      this.time.delayedCall(F.holdMs, done);
+      return;
+    }
+    const x = r.x + r.w * S.x;
+    const y = r.y + r.h * S.y;
+    const stamp = this.add.image(x, y, SEAL_STAMP_KEY);
+    const base = (r.w * S.size) / stamp.width;
+    const tilt = Phaser.Math.FloatBetween(-F.tiltDeg, F.tiltDeg);
+    stamp.setScale(base * F.fromScale).setAngle(tilt * 2).setAlpha(0);
+    this.card.add(stamp);
+    this.tweens.add({
+      targets: stamp,
+      scale: base,
+      angle: tilt,
+      alpha: 1,
+      duration: F.dropMs,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        // Удар: звук, лист вздрагивает, осколки печати разлетаются.
+        sfx(this, this.cache.audio.exists('seal_stamp') ? 'seal_stamp' : 'contract_accept');
+        this.tweens.add({ targets: this.card, y: F.shakePx, duration: 50, yoyo: true, ease: 'Quad.easeOut' });
+        for (let i = 0; i < F.shards; i++) {
+          const n = i % MENU_ART.shards.length;
+          if (!this.textures.exists(menuShardKey(n))) continue;
+          const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
+          const shard = this.add.image(x, y, menuShardKey(n)).setScale(base * 1.6).setDepth(10);
+          this.card.add(shard);
+          const dist = F.shardDist * Phaser.Math.FloatBetween(0.6, 1);
+          this.tweens.add({
+            targets: shard,
+            x: x + Math.cos(a) * dist,
+            y: y + Math.sin(a) * dist,
+            angle: Phaser.Math.Between(-180, 180),
+            alpha: 0,
+            duration: F.shardMs,
+            ease: 'Cubic.easeOut',
+            onComplete: () => shard.destroy(),
+          });
+        }
+        this.time.delayedCall(F.holdMs, done);
+      },
+    });
   }
 
   // ─── Доска «Заказы на сегодня» ───────────────────────────────────────────

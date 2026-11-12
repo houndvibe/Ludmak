@@ -85,7 +85,7 @@ export const SHOP_TIER_WEIGHTS_BY_NIGHT: [number, number, number][] = [
  */
 export const LEVEL_BY_NIGHT = [1, 2, 3, 3, 4];
 
-/** Сколько монстров сверх уровня приходит к двери, чтобы был выбор. Очередь = уровень + QUEUE_EXTRA (не больше 6 заказчиков). */
+/** Сколько монстров сверх уровня приходит к двери, чтобы был выбор. Очередь = уровень + QUEUE_EXTRA (не больше числа заказчиков). */
 export const QUEUE_EXTRA = 2;
 
 /**
@@ -116,13 +116,11 @@ export const ENEMY_POOL_BY_NIGHT: EnemyId[][] = [
 ];
 
 /**
- * Босс по ночам (null — без босса). В такую ночь первый монстр в очереди приносит заказ на босса:
- * BOSS_ESCORT обычных врагов, затем босс. Остальные заказы — обычные.
+ * Финальный босс — не заказ: в последнюю ночь (NIGHTS) после всех боёв дня начинается бой с ним, со здоровьем, что
+ * осталось (погиб днём или переждал день — с полным). Победил — победа в игре; проиграл — −1 жизнь и бой заново
+ * с полным здоровьем, пока есть жизни. Награды и неустойки нет. О нём предупреждает письмо в начале ночи 1.
  */
-export const BOSS_BY_NIGHT: (EnemyId | null)[] = [null, null, null, null, 'vedmak'];
-
-/** Сколько обычных врагов идёт перед боссом в заказе на босса. */
-export const BOSS_ESCORT = 0;
+export const FINAL_BOSS: EnemyId = 'vedmak';
 
 /**
  * Множитель здоровья врагов и силы их предметов (урон, лечение, блок) по ночам — рост силы.
@@ -166,6 +164,13 @@ export const CLIENT_PENALTY_MULT: Partial<Record<ClientId, number>> = { vodyanoy
 /** Призрак: первый удар героя по каждому врагу заказа умножается на это число. */
 export const GHOST_FIRST_HIT_MULT = 2;
 
+/**
+ * Безголовый «Принеси мне их голову»: отбил (парировал) не меньше PARRY_REWARD_SHARE атак врагов его заказа —
+ * награда × PARRY_REWARD_MULT. Атаки, отменённые смертью врага, не считаются; атак не было — условие выполнено.
+ */
+export const PARRY_REWARD_SHARE = 0.9;
+export const PARRY_REWARD_MULT = 2;
+
 // Отступить можно только на привале между заказами (внутри заказа враги идут подряд без паузы).
 // Отступление заканчивает день. За каждый незавершённый заказ:
 // неустойка × (непройденные враги заказа / все враги заказа), округление вверх.
@@ -188,7 +193,7 @@ export const ENEMY_STATS: Record<EnemyId, EnemyStats> = {
   razboynik: { hp: 40, bounty: 14 },
   monakh: { hp: 50, bounty: 16 },
   aristokrat: { hp: 60, bounty: 18 },
-  vedmak: { hp: 140, bounty: 45 }, // было hp 160
+  vedmak: { hp: 115, bounty: 45 }, // финальный босс с параллельным оружием (было 140 с одним мечом; ещё раньше 160)
 };
 
 /**
@@ -199,10 +204,26 @@ export const ENEMY_STATS: Record<EnemyId, EnemyStats> = {
 export const PARRY_DAMAGE_MULT = 0.5;
 
 /**
+ * Перки основного оружия при парировании (основное — выбрано в рюкзаке, оно же курсор в бою; без него парировать нельзя).
+ * Меч — только базовое PARRY_DAMAGE_MULT. shieldMult — щит гасит больше (доля урона, что проходит).
+ * Кинжал наносит врагу свой урон (итог с соседями). torchSlow — факел: каждое парирование +столько секунд к перезарядке
+ * всех предметов врага до конца боя с ним, не больше torchSlowMax. axeCharges — топор копит заряды за парирования
+ * (весь день); пропустил хоть одну атаку врага — заряды сгорают; набрал — следующий удар самого топора × axeMult. sickleHeal — серп лечит героя за парирование.
+ */
+export const PARRY_PERK = { shieldMult: 0.2, torchSlow: 0.2, torchSlowMax: 1.0, axeCharges: 4, axeMult: 2, sickleHeal: 2 };
+
+/**
  * На какую долю парирований настроен баланс: бот симуляции парирует столько атак врага в основных таблицах
  * (цели ночей, экономика, заказчики, модификаторы). 0.6 — «средний игрок»; было 0 (парирование как чистый бонус).
  */
 export const BALANCE_PARRY_RATE = 0.6;
+
+/**
+ * Щит-курсор в симуляции: насколько чаще бот парирует, пока в рюкзаке работает щит (прибавка к доле, не выше 1;
+ * 0% остаётся 0%). Щит бьёт всей областью — оценка,
+ * подбирается по ощущениям игроков. Отдельная таблица в sim показывает щит при прибавке 0 / 0.1 / 0.2.
+ */
+export const SHIELD_PARRY_BONUS = 0.1;
 
 /** Потолок блока врага (от ростового щита). Блок поглощает урон героя. */
 export const ENEMY_BLOCK_MAX = 20;
@@ -261,6 +282,8 @@ export interface EnemyItemStats {
   healBelow?: number;
   /** Сколько монет крадёт из награды текущего заказа за удар. */
   stealCoins?: number;
+  /** Аура: соседние предметы в сумке (касание стороной) наносят урон и лечат на эту долю больше. */
+  auraBoost?: number;
 }
 
 export const ENEMY_ITEM_STATS: Record<EnemyItemId, EnemyItemStats> = {
@@ -280,10 +303,14 @@ export const ENEMY_ITEM_STATS: Record<EnemyItemId, EnemyItemStats> = {
   // Аристократ: один выстрел, потом быстрая шпага, двойной урон по монстру
   pistol: { cooldown: 2.5, charges: 1, damage: 18 },
   silver_rapier: { cooldown: 1.2, damage: 3, monsterMult: 2 },
-  // Ведьмак: эликсир при здоровье ниже 40%, одна бомба, серебряный меч
+  // Ведьмак (финальный босс): эликсир при здоровье ниже 40%, одна бомба; оружие бьёт параллельно (parallelWeapons):
+  // два меча и два кинжала, подкова +25% соседям (все четыре клинка).
   witcher_elixir: { cooldown: 1.0, charges: 1, heal: 40, healBelow: 0.4 }, // было heal 50
   witcher_bomb: { cooldown: 2.0, charges: 1, damage: 20 },
-  silver_sword: { cooldown: 1.8, damage: 9 },
+  silver_sword: { cooldown: 2.7, damage: 4 }, // было 1.8 / 9 — когда меч был единственным оружием
+  witcher_steel_sword: { cooldown: 2.7, damage: 4 },
+  witcher_dagger: { cooldown: 1.5, damage: 2 },
+  witcher_horseshoe: { auraBoost: 0.25 },
 };
 
 // ─── Предметы ────────────────────────────────────────────────────────────────
@@ -320,9 +347,9 @@ export interface ItemStats {
 export const ITEM_STATS: Record<ItemId, ItemStats> = {
   // Пассивные
   steel_sword: { price: 7, cooldown: 1.5, damage: 6 },
-  silver_dagger: { price: 8, cooldown: 0.8, damage: 3 },
+  silver_dagger: { price: 8, cooldown: 1.0, damage: 3 }, // было cooldown 0.8 — нерф (решение дизайнера)
   cursed_axe: { price: 30, cooldown: 3.0, damage: 15, selfDamage: 4, selfDamageChance: 0.25 },
-  wooden_shield: { price: 10, cooldown: 4.0, block: 5 }, // было 18 (cooldown 3, block 6 — ещё раньше): щит вместо подковы сильнее (ночь 3: 33% против 28%), теперь он дороже подковы
+  wooden_shield: { price: 10, cooldown: 4.0, block: 3 }, // щит-курсор для парирования (parryShield); блок 3 / 5 / 7 по уровням (STAR_LEVELS); было 2 / 4 / 7, ещё раньше block 5; // было 18 (cooldown 3, block 6 — ещё раньше): щит вместо подковы сильнее (ночь 3: 33% против 28%), теперь он дороже подковы
   torch: { price: 7, cooldown: 4.0, damage: 7 },
   bread: { price: 4, cooldown: 4.0, heal: 5, charges: 3 }, // съедается за 3 срабатывания (решение дизайнера); было cooldown 6 — таймер обнуляется с каждым врагом, и хлеб не успевал сработать
   // Амулеты: главный эффект — аура на соседей (SYNERGY.horseshoeAura / boneAura).
@@ -378,6 +405,38 @@ export const STAR_MULT = [1, 1.6, 2.5];
 
 /** Максимальный уровень предмета. */
 export const MAX_STAR = 3;
+
+/** Явные числа уровня для отдельных предметов: что указано — заменяет расчёт по STAR_MULT. */
+export interface StarLevel {
+  cooldown?: number;
+  block?: number;
+  stun?: number;
+  weaponMult?: number;
+  charges?: number;
+  /** Сила ауры амулета (доля): +0.4 — +40% соседям. */
+  aura?: number;
+}
+
+/**
+ * Уровни ★2 и ★3 по предметам (решение дизайнера): [★2, ★3]. Чего здесь нет (урон бомбы, заряды бомбы,
+ * всё у остальных предметов) — база × STAR_MULT.
+ */
+export const STAR_LEVELS: Partial<Record<ItemId, [StarLevel, StarLevel]>> = {
+  silver_horseshoe: [{ aura: 0.4 }, { aura: 0.6 }], // ★1 +25%
+  whetstone: [{ aura: 0.16 }, { aura: 0.25 }], // ★1 +10% к урону
+  bone_amulet: [{ aura: 0.64 }, { aura: 0.9 }], // ★1 +40%
+  mandrake: [{ stun: 3, charges: 2 }, { stun: 5, charges: 2 }], // ★1 4 с, 1 заряд
+  oil_vs_humans: [{ weaponMult: 2.0, charges: 1 }, { weaponMult: 2.2, charges: 2 }], // ★1 ×1.5, 1 заряд
+  bomb_grom: [{ stun: 3 }, { stun: 4 }], // ★1 оглушение 2 с
+  wooden_shield: [{ block: 5 }, { block: 7 }], // ★1 — блок 3; медлительность — SHIELD_SLOW_BY_STAR
+};
+
+/**
+ * Медлительность от щита (щит-курсор): пассивные предметы героя с уроном бьют реже — к их перезарядке прибавляется
+ * столько секунд, по уровню щита ★1 / ★2 / ★3. Складывается от каждого работающего щита в сетке.
+ * Было: окно парирования врага короче на 0.1 с за щит.
+ */
+export const SHIELD_SLOW_BY_STAR = [1.0, 0.7, 0.5]; // было 1.5 / 1.2 / 1.0 — щит почти бесполезен (симуляция)
 
 // ─── Бой ─────────────────────────────────────────────────────────────────────
 

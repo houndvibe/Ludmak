@@ -18,6 +18,7 @@ export const SOUND_VOLUME: Record<SoundKey, number> = {
 
   // Дом
   contract_accept: 1,
+  seal_stamp: 1,
   contract_decline: 1,
   monster_arrive: 1,
   window_close: 1,

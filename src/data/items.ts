@@ -58,16 +58,29 @@ export interface ItemDef {
   h: number;
   /** Редкость 1–3: как часто предмет встречается в магазине по ночам (веса — SHOP_TIER_WEIGHTS_BY_NIGHT). */
   tier: ItemTier;
+  /**
+   * Щит-курсор: пока предмет в сетке и работает, атаки в бою отбиваются им — курсор в зоне атак становится картинкой
+   * щита, парирует вся его область. Медлительность: атаки предметов героя реже (SHIELD_SLOW_BY_STAR, складывается).
+   */
+  parryShield?: true;
+  /**
+   * Может быть основным оружием (курсор в бою) и что делает при парировании. Числа — PARRY_PERK в balance.ts.
+   * sword — гасит базовые 50%; shield — гасит больше; dagger — бьёт врага своим уроном; torch — замедляет предметы врага;
+   * axe — копит заряды, на N зарядах следующий удар топора ×2; sickle — лечит героя.
+   */
+  parryPerk?: ParryPerkId;
 }
+
+export type ParryPerkId = 'sword' | 'shield' | 'dagger' | 'torch' | 'axe' | 'sickle';
 
 export type ItemTier = 1 | 2 | 3;
 
   export const ITEMS: Record<ItemId, ItemDef> = {
-    steel_sword: { id: 'steel_sword', name: 'Стальной меч', mode: 'passive', category: 'weapon', tags: [], w: 1, h: 3, tier: 1 },
-    silver_dagger: { id: 'silver_dagger', name: 'Серебряный кинжал', mode: 'passive', category: 'weapon', tags: ['silver'], w: 1, h: 2, tier: 1 },
-    cursed_axe: { id: 'cursed_axe', name: 'Проклятый топор', mode: 'passive', category: 'weapon', tags: ['curse'], w: 2, h: 2, tier: 3 },
-    wooden_shield: { id: 'wooden_shield', name: 'Деревянный щит', mode: 'passive', category: 'armor', tags: [], w: 2, h: 2, tier: 1 },
-    torch: { id: 'torch', name: 'Факел', mode: 'passive', category: 'weapon', tags: ['fire'], w: 1, h: 2, tier: 1 },
+    steel_sword: { id: 'steel_sword', name: 'Стальной меч', mode: 'passive', category: 'weapon', tags: [], w: 1, h: 3, tier: 1, parryPerk: 'sword' },
+    silver_dagger: { id: 'silver_dagger', name: 'Серебряный кинжал', mode: 'passive', category: 'weapon', tags: ['silver'], w: 1, h: 2, tier: 1, parryPerk: 'dagger' },
+    cursed_axe: { id: 'cursed_axe', name: 'Проклятый топор', mode: 'passive', category: 'weapon', tags: ['curse'], w: 2, h: 2, tier: 3, parryPerk: 'axe' },
+    wooden_shield: { id: 'wooden_shield', name: 'Деревянный щит', mode: 'passive', category: 'armor', tags: [], w: 2, h: 2, tier: 1, parryShield: true, parryPerk: 'shield' },
+    torch: { id: 'torch', name: 'Факел', mode: 'passive', category: 'weapon', tags: ['fire'], w: 1, h: 2, tier: 1, parryPerk: 'torch' },
     bread: { id: 'bread', name: 'Краюха хлеба', mode: 'passive', category: 'food', tags: ['heal'], w: 1, h: 1, tier: 1 },
     silver_horseshoe: { id: 'silver_horseshoe', name: 'Серебряная подкова', mode: 'passive', category: 'amulet', tags: ['silver'], w: 1, h: 1, tier: 2 },
     bone_amulet: { id: 'bone_amulet', name: 'Ладанка с костями', mode: 'passive', category: 'amulet', tags: ['curse'], w: 1, h: 1, tier: 2 },
@@ -76,7 +89,7 @@ export type ItemTier = 1 | 2 | 3;
     oil_vs_humans: { id: 'oil_vs_humans', name: 'Масло против людей', mode: 'active', category: 'alchemy', tags: ['oil'], w: 1, h: 1, tier: 2 },
     mandrake: { id: 'mandrake', name: 'Мандрагора', mode: 'active', category: 'alchemy', tags: ['stun', 'noisy'], w: 1, h: 2, tier: 3 },
   whetstone: { id: 'whetstone', name: 'Точильный камень', mode: 'passive', category: 'amulet', tags: [], w: 1, h: 1, tier: 1 },
-  rusty_sickle: { id: 'rusty_sickle', name: 'Ржавый серп', mode: 'passive', category: 'weapon', tags: ['curse'], w: 1, h: 2, tier: 1 },
+  rusty_sickle: { id: 'rusty_sickle', name: 'Ржавый серп', mode: 'passive', category: 'weapon', tags: ['curse'], w: 1, h: 2, tier: 1, parryPerk: 'sickle' },
   smoked_ham: { id: 'smoked_ham', name: 'Копчёный окорок', mode: 'passive', category: 'food', tags: ['heal'], w: 1, h: 2, tier: 2 },
   };
 

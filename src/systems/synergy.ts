@@ -1,16 +1,16 @@
 // Расчёт соседства и уровня (★) предметов в рюкзаке героя. Без Phaser — используется рюкзаком, боем и симуляцией.
 // Вход — предметы героя (учитываются только лежащие в сетке). Выход — итоговые характеристики каждого
 // предмета и список применённых эффектов с источниками.
-import { ITEM_STATS, STAR_MULT, type ItemStats } from '../config/balance';
+import { ITEM_STATS, SHIELD_SLOW_BY_STAR, STAR_LEVELS, STAR_MULT, type ItemStats, type StarLevel } from '../config/balance';
 import { CATEGORY_NAMES, ITEMS, type ItemId } from '../data/items';
 import { SYNERGIES, type Selector, type SynergyRule } from '../data/synergies';
 import { TAGS, type TagId } from '../data/tags';
 import { cellsOf, footprint, type OwnedItem } from './backpack';
 
-/** Характеристики, которые растут от 'all' (и от уровня — кроме оглушения и длительности). */
+/** Характеристики, которые растут от 'all'. */
 const EFFECT_STATS = ['damage', 'heal', 'block', 'stun', 'buffDuration'] as const;
-/** Что умножается уровнем ★. */
-const STAR_STATS = ['damage', 'heal', 'block'] as const;
+/** Что умножается уровнем ★ (ещё заряды, прибавка множителя масла и сила ауры амулета). Перезарядка, длительность и самоурон — нет. */
+const STAR_STATS = ['damage', 'heal', 'block', 'stun'] as const;
 
 export interface AppliedEffect {
   rule: SynergyRule;
@@ -71,16 +71,36 @@ export function pairLinks(effects: AppliedEffect[]): PairLink[] {
 
 export const starOf = (it: { star?: number }) => it.star ?? 1;
 
+/** Явные числа уровня star из STAR_LEVELS (★1 — всегда пусто). */
+const starLevel = (id: ItemId, star: number): StarLevel => (star > 1 ? STAR_LEVELS[id]?.[star - 2] : undefined) ?? {};
+
 /** Максимум зарядов предмета на этом уровне (undefined — у предмета нет зарядов). */
 export function maxCharges(id: ItemId, star: number): number | undefined {
   const c = ITEM_STATS[id].charges;
-  return c === undefined ? undefined : Math.ceil(c * STAR_MULT[star - 1]);
+  if (c === undefined) return undefined;
+  return starLevel(id, star).charges ?? Math.ceil(c * STAR_MULT[star - 1]);
 }
 
-/** Характеристики предмета с учётом уровня ★ (урон, лечение, блок и заряды × множитель). */
+/** Сила ауры амулета на уровне star: из STAR_LEVELS или база × STAR_MULT. */
+export function starAura(id: ItemId, star: number, base: number): number {
+  return starLevel(id, star).aura ?? base * STAR_MULT[star - 1];
+}
+
+/**
+ * Характеристики предмета с учётом уровня ★: урон, лечение, блок, оглушение и заряды × множитель уровня;
+ * у масла растёт прибавка к урону оружия (×1.5 → +50% × множитель). Явные числа из STAR_LEVELS важнее.
+ */
 export function starStats(id: ItemId, star: number): ItemStats {
   const s: ItemStats = { ...ITEM_STATS[id] };
-  for (const k of STAR_STATS) if (s[k] !== undefined) s[k] = s[k]! * STAR_MULT[star - 1];
+  const m = STAR_MULT[star - 1];
+  const lv = starLevel(id, star);
+  for (const k of STAR_STATS) if (s[k] !== undefined) s[k] = s[k]! * m;
+  if (s.weaponMult !== undefined) s.weaponMult = 1 + (s.weaponMult - 1) * m;
+  if (s.stun !== undefined && lv.stun !== undefined) s.stun = lv.stun;
+  // Щит: на ★1 нет перезарядки и блока, они появляются с ★2.
+  if (lv.cooldown !== undefined) s.cooldown = lv.cooldown;
+  if (lv.block !== undefined) s.block = lv.block;
+  if (s.weaponMult !== undefined && lv.weaponMult !== undefined) s.weaponMult = lv.weaponMult;
   s.charges = maxCharges(id, star);
   return s;
 }
@@ -220,7 +240,8 @@ export function computePower(allItems: OwnedItem[], blocked?: BlockRule): PowerR
     for (const [s, t] of pairs(rule, false)) {
       const p = powers.get(t.uid)!;
       if (!hasStat(p.base, ef.stat)) continue;
-      const amount = ef.amount * (ef.aura ? powers.get(s.uid)!.aura : 1);
+      // Аура амулета: × усиления от соседей × множитель уровня ★ самого амулета.
+      const amount = ef.aura ? starAura(s.id, starOf(s), ef.amount) * powers.get(s.uid)!.aura : ef.amount;
       sums.get(t.uid)![ef.stat] += amount;
       add(rule, s.uid, t.uid, `${pct(amount)} ${boostWhat(p.base, ef.stat)}`, amount > 0);
     }
@@ -233,7 +254,25 @@ export function computePower(allItems: OwnedItem[], blocked?: BlockRule): PowerR
       p.final[k] = Math.max(0, p.base[k]! * (1 + bonus));
     }
   }
+  // 4. Медлительность от щитов: пассивные предметы с уроном бьют реже (перезарядка + сумма по работающим щитам).
+  const slow = shieldSlow(items, powers);
+  if (slow > 0) {
+    for (const it of items) {
+      const p = powers.get(it.uid)!;
+      if (ITEMS[it.id].mode === 'passive' && p.base.damage && p.base.cooldown) p.final.cooldown = p.base.cooldown + slow;
+    }
+  }
   return { powers, effects };
+}
+
+/** Медлительность от щитов-курсоров в сетке: сумма SHIELD_SLOW_BY_STAR по работающим (не отключённым) щитам, сек. */
+export function shieldSlow(items: OwnedItem[], powers: Map<number, ItemPower>): number {
+  let slow = 0;
+  for (const it of items) {
+    if (!it.inGrid || !ITEMS[it.id].parryShield || powers.get(it.uid)?.disabled) continue;
+    slow += SHIELD_SLOW_BY_STAR[starOf(it) - 1];
+  }
+  return slow;
 }
 
 /** «Сила снаряжения»: то же, что увидит бой. Активные предметы (бомбы, эликсиры) в «в секунду» не входят. */
@@ -276,19 +315,19 @@ function targetName(sel: Selector): string {
   return sel.item ? ITEMS[sel.item].name : '';
 }
 
-/** Аура предмета-источника: на какой тег действует (или название цели), насколько (доля) и к чему — урону или эффекту. */
-export function auraInfo(id: ItemId): { tag: TagId | null; target: string; amount: number; damage: boolean } | null {
+/** Аура предмета-источника на уровне star: на какой тег действует (или название цели), насколько (доля) и к чему — урону или эффекту. */
+export function auraInfo(id: ItemId, star = 1): { tag: TagId | null; target: string; amount: number; damage: boolean } | null {
   const rule = SYNERGIES.find((r) => r.source.item === id && r.effect.kind === 'boost');
   if (!rule || rule.effect.kind !== 'boost') return null;
   const tag = rule.target.tag ?? null;
   const target = targetName(rule.target);
-  return { tag, target, amount: rule.effect.amount, damage: rule.effect.stat === 'damage' };
+  return { tag, target, amount: starAura(id, star, rule.effect.amount), damage: rule.effect.stat === 'damage' };
 }
 
 /** Описание ауры предмета-источника для подсказки: «соседнее Серебро +40% к эффекту». */
-export function auraText(id: ItemId): string | null {
+export function auraText(id: ItemId, star = 1): string | null {
   const rule = SYNERGIES.find((r) => r.source.item === id && r.effect.kind === 'boost');
   if (!rule || rule.effect.kind !== 'boost') return null;
   const target = targetName(rule.target);
-  return `аура: соседнее ${target} ${pct(rule.effect.amount)} к ${rule.effect.stat === 'damage' ? 'урону' : 'эффекту'}`;
+  return `аура: соседнее ${target} ${pct(starAura(id, star, rule.effect.amount))} к ${rule.effect.stat === 'damage' ? 'урону' : 'эффекту'}`;
 }

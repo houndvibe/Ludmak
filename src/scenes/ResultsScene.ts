@@ -1,14 +1,16 @@
 // Итоги ночи: награды и неустойки по каждому заказу, возврат авансов, смерть — минус жизнь и потеря предмета.
 import * as Phaser from 'phaser';
 import { BG_NIGHT_KEY } from '../config/assets';
-import { START_LIVES } from '../config/balance';
+import { PARRY_REWARD_MULT, START_LIVES } from '../config/balance';
 import { CLIENTS } from '../data/clients';
 import { ITEMS } from '../data/items';
 import type { SoundKey } from '../config/audio';
 import { FEEL } from '../config/feel';
 import { tutorialAttach } from '../components/Hints';
 import { playMusic, sfx } from '../components/Sound';
-import { advanceNight, heroLevel, markTutorialDone, nextLevel, run } from '../state';
+import { advanceNight, finalAhead, heroLevel, markTutorialDone, nextLevel, run } from '../state';
+import { ENEMIES } from '../data/enemies';
+import { FINAL_BOSS } from '../config/balance';
 import { addBackground, addText, Button, C, TITLE, fadeIn, goto, livesText, W } from '../ui';
 
 export class ResultsScene extends Phaser.Scene {
@@ -38,7 +40,7 @@ export class ResultsScene extends Phaser.Scene {
       const n = r.contract.enemies.length;
       if (r.done) {
         const stolen = r.stolen > 0 ? ` (украдено ${Math.min(r.stolen, r.contract.reward)})` : '';
-        const what = r.advance ? `аванс ${r.contract.reward} остаётся у тебя` : `награда +${r.reward}`;
+        const what = r.advance ? `аванс ${r.contract.reward} остаётся у тебя` : `награда +${r.reward}${r.parryBonus ? ` (×${PARRY_REWARD_MULT} за отбитые атаки)` : ''}`;
         lines.push([`${name}: выполнен — ${what}${stolen}`, C.good]);
       } else {
         const refund = r.refund > 0 ? `, вернуть аванс −${r.refund}` : '';
@@ -54,6 +56,11 @@ export class ResultsScene extends Phaser.Scene {
       lifeLost ? C.bad : C.text,
     ]);
     if (s.gameOver === 'lose') lines.push(['Жизни кончились — охота окончена', C.bad]);
+    const final = finalAhead();
+    if (final) {
+      const hp = run.finalHp === null ? 'с полным здоровьем' : `со здоровьем ${run.finalHp}`;
+      lines.push([`${ENEMIES[FINAL_BOSS].name} прибыл. Бой начнётся ${hp}.`, C.accent]);
+    }
     const level = nextLevel();
     const levelUp = !s.gameOver && level !== null && level > heroLevel();
     if (levelUp) lines.push([`Новый уровень: теперь до ${level} заказов за ночь`, C.accent]);
@@ -72,10 +79,12 @@ export class ResultsScene extends Phaser.Scene {
       markTutorialDone();
     }
 
-    const label = s.gameOver ? 'Дальше' : 'Следующая ночь →';
+    const label = s.gameOver ? 'Дальше' : final ? `${ENEMIES[FINAL_BOSS].name} →` : 'Следующая ночь →';
     new Button(this, W / 2, 1000, 480, 80, label, () => {
       if (s.gameOver) {
         goto(this, 'GameOver');
+      } else if (final) {
+        goto(this, 'Battle', { final: true });
       } else {
         advanceNight();
         goto(this, 'Home');

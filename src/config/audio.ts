@@ -8,6 +8,8 @@ export const SOUND_KEYS = [
   'ui_hover',
   // Дом
   'contract_accept',
+  /** Удар печати по листу заказа (нет файла — вместо него contract_accept). */
+  'seal_stamp',
   'contract_decline',
   'monster_arrive',
   'window_close',

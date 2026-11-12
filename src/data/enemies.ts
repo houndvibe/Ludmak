@@ -21,6 +21,8 @@ export interface EnemyDef {
   boss: boolean;
   /** Игнорирует первую бомбу героя: заряд тратится, но нет ни урона, ни оглушения (ведьмак). */
   dodgeFirstBomb?: boolean;
+  /** Оружие (действия категории «Оружие») бьёт каждое по своей перезарядке, одновременно, как у героя (ведьмак). */
+  parallelWeapons?: boolean;
   /** Размер сетки сумки в клетках. */
   bagCols: number;
   bagRows: number;
@@ -91,12 +93,19 @@ export const ENEMIES: Record<EnemyId, EnemyDef> = {
     name: 'Ведьмак',
     boss: true,
     dodgeFirstBomb: true,
+    parallelWeapons: true,
+    // Предметы героя в руках ведьмака. Подкова в центре — её касаются все четыре клинка: мечи слева и справа,
+    // кинжалы сверху и снизу. Бомба и эликсир — в верхних углах.
     bagCols: 3,
-    bagRows: 3,
+    bagRows: 5,
     bag: [
-      { item: 'silver_sword', col: 0, row: 0 },
-      { item: 'witcher_bomb', col: 1, row: 0 },
-      { item: 'witcher_elixir', col: 1, row: 1 },
+      { item: 'witcher_bomb', col: 0, row: 0 },
+      { item: 'witcher_dagger', col: 1, row: 0 },
+      { item: 'witcher_elixir', col: 2, row: 0 },
+      { item: 'witcher_steel_sword', col: 0, row: 1 },
+      { item: 'witcher_horseshoe', col: 1, row: 2 },
+      { item: 'silver_sword', col: 2, row: 1 },
+      { item: 'witcher_dagger', col: 1, row: 3 },
     ],
   },
 };

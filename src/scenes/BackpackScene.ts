@@ -10,7 +10,7 @@ import { canPlace, MASK, type OwnedItem } from '../systems/backpack';
 import { computePower, gearSummary, pairLinks, starOf, starStats, type PowerResult } from '../systems/synergy';
 import { tutorialAttach, tutorialDone } from '../components/Hints';
 import { playMusic, sfx } from '../components/Sound';
-import { canMerge, mergeItems, run } from '../state';
+import { canBeMain, canMerge, mainItem, mergedPreview, mergeItems, run, setMain } from '../state';
 import {
   addBackground,
   addHeader,
@@ -22,6 +22,8 @@ import {
   fadeIn,
   fit,
   goto,
+  chipsDiff,
+  matchChips,
   itemRarityFrame,
   itemStatChips,
   TITLE,
@@ -94,6 +96,7 @@ export class BackpackScene extends Phaser.Scene {
       C.dim,
     );
     this.countText = addText(this, L.grid.x, 200, '', 26, C.accent);
+    this.mainSlot = this.add.container(0, 0).setDepth(11);
     this.addHideLabelsCheckbox();
 
     // «Вне сумок» — внутренность сундука на фоне; подпись и страницы — на крышке.
@@ -120,6 +123,8 @@ export class BackpackScene extends Phaser.Scene {
     this.panelObjs = [];
     this.shownItem = null;
     this.hoveredItem = null;
+    this.pinnedItem = null;
+    this.mergePreview = null;
     this.tip = addText(this, 0, 0, '', 20, C.text, {
       backgroundColor: 'rgba(20,18,26,0.95)',
       padding: { x: 12, y: 8 },
@@ -138,11 +143,18 @@ export class BackpackScene extends Phaser.Scene {
     let leftAt = 0;
     let entered = false;
     const stillItem = () => this.shownItem !== null && this.hoveredItem === null;
+    // Мышь ушла с предмета — пергамент возвращается к закреплённому предмету (клик по предмету) или к силе снаряжения.
     const check = (p: Phaser.Input.Pointer) => {
-      if (!stillItem()) return;
+      if (!stillItem() || this.shownItem === this.pinnedItem) return;
       if (onPanel(p)) entered = true;
-      else if (entered || this.time.now - leftAt > FEEL.backpackInfoKeepMs) this.showPanel(null);
+      else if (entered || this.time.now - leftAt > FEEL.backpackInfoKeepMs) this.showPanel(this.pinnedItem);
     };
+    // Клик мимо предметов и пергамента — открепить: снова сила снаряжения.
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => {
+      if (p.button !== 0 || over.length > 0 || onPanel(p) || this.pinnedItem === null) return;
+      this.pinnedItem = null;
+      this.showPanel(null);
+    });
     this.input.on('pointermove', check);
     const itemLeft = () => {
       leftAt = this.time.now;
@@ -175,10 +187,29 @@ export class BackpackScene extends Phaser.Scene {
         else itemLeft();
       },
       stash: s,
+      // Клик по предмету — его описание закрепляется на пергаменте.
+      onPickUp: (it) => {
+        this.pinnedItem = it.uid;
+        this.showPanel(it.uid);
+      },
       canPlace: (it, rotated, col, row) => canPlace(run.items, it.id, rotated, col, row, it.uid),
       preview: (it, col, row, rotated) => this.previewLabels(it, col, row, rotated),
+      // Двойной клик по оружию или щиту — сделать основным (курсор в бою).
+      onDoubleClick: (it) => {
+        if (!canBeMain(it)) return;
+        setMain(it.uid);
+        sfx(this, 'ui_click');
+        this.refresh();
+      },
       canMerge: (a, b) => canMerge(a, b),
       onMerge: (a, b) => mergeItems(a.uid, b.uid),
+      // Превью слияния: пергамент показывает цель после слияния, соседи — что у них изменится.
+      onMergeHover: (a, b) => {
+        this.mergePreview = a && b ? { dragged: a, target: b } : null;
+        if (this.mergePreview) this.drawMergePanel();
+        else this.showPanel(this.shownItem);
+      },
+      mergeLabels: (a, b) => this.mergeNeighborLabels(a, b),
       onChange: () => {
         this.refresh();
         tutorialDone(this, 'drag'); // обучение: предмет переложили
@@ -204,10 +235,77 @@ export class BackpackScene extends Phaser.Scene {
     const grid = { x: L.grid.x, y: L.grid.y, w: gridW, h: gridH };
     tutorialAttach(this, (id) => {
       if (id === 'drag' || id === 'labels') return grid;
+      if (id === 'mainWeapon') {
+        const m = L.mainSlot;
+        return { x: m.x, y: m.labelY - 16, w: m.size, h: m.y + m.size - m.labelY + 16 };
+      }
       if (id === 'power') return L.power;
       if (id === 'bagsHome') return { x: home.x - home.w / 2, y: home.y - home.h / 2, w: home.w, h: home.h };
       return null;
     });
+  }
+
+  /** Предмет, закреплённый на пергаменте одинарным кликом (null — нет): к нему пергамент возвращается после наведения. */
+  private pinnedItem: number | null = null;
+
+  /** Сейчас перетаскиваемый предмет над таким же — пергамент показывает результат слияния. */
+  private mergePreview: { dragged: OwnedItem; target: OwnedItem } | null = null;
+
+  /** Рюкзак, как будто слияние уже произошло: перетаскиваемого нет, цель на уровень выше. */
+  private mergedItems(dragged: OwnedItem, target: OwnedItem): OwnedItem[] {
+    const merged = mergedPreview(dragged, target);
+    return run.items.filter((i) => i.uid !== dragged.uid).map((i) => (i.uid === target.uid ? merged : i));
+  }
+
+  /** Метки на соседях цели: какие их числа изменятся после слияния (аура амулета ★2 и т. п.). */
+  private mergeNeighborLabels(dragged: OwnedItem, target: OwnedItem): Map<number, GridLabel[]> {
+    const after = computePower(this.mergedItems(dragged, target));
+    const out = new Map<number, GridLabel[]>();
+    for (const it of run.items) {
+      if (it.uid === dragged.uid || it.uid === target.uid || !it.inGrid) continue;
+      const was = this.power.powers.get(it.uid);
+      const now = after.powers.get(it.uid);
+      if (!was || !now) continue;
+      const star = starOf(it);
+      const diff = chipsDiff(itemStatChips(it.id, was.final, it.charges, star), itemStatChips(it.id, now.final, it.charges, star));
+      if (diff.length) out.set(it.uid, diff.map((d) => ({ text: `${d.name} ${d.was} → ${d.now}`, good: true })));
+    }
+    return out;
+  }
+
+  /** Пергамент во время превью слияния: цель после слияния, значки «было → станет» (итог с соседями). */
+  private drawMergePanel(): void {
+    const m = this.mergePreview;
+    if (!m) return;
+    this.tip.setVisible(false);
+    for (const o of this.panelObjs) o.destroy();
+    this.panelObjs = [];
+    const r = BACKPACK_LAYOUT.power;
+    const x = r.x + PANEL.pad;
+    const t = m.target;
+    const merged = mergedPreview(m.dragged, t);
+    const d = ITEMS[t.id];
+    const star = starOf(t);
+    const name = this.keep(addText(this, x + 40, r.y + 10, `${d.name}: ★${star} → ★${star + 1}`, 28, C.inkAccent, TITLE));
+    this.keep(fit(this.add.image(x + 16, name.y + name.height / 2, categoryKey(d.category)), 32, 32));
+    const before = this.power.powers.get(t.uid)?.final ?? starStats(t.id, star);
+    const after = computePower(this.mergedItems(m.dragged, t)).powers.get(t.uid)?.final ?? starStats(t.id, star + 1);
+    const beforeChips = itemStatChips(t.id, before, t.charges, star);
+    const afterChips = itemStatChips(t.id, after, merged.charges, star + 1);
+    const pairs = matchChips(beforeChips, afterChips);
+    const chips: PanelChip[] = afterChips.map((ch, i) => {
+      const was = pairs[i];
+      const changed = !was || was.value !== ch.value;
+      return {
+        icon: statIconKey(ch.icon),
+        tag: ch.tag ? tagKey(ch.tag) : ch.icon2 ? statIconKey(ch.icon2) : undefined,
+        value: changed && was ? `${was.value} → ${ch.value}` : ch.value,
+        color: ch.icon === 'self' ? C.bad : changed ? C.good : C.text,
+        hint: changed && was ? `${ch.hint}\nСейчас: ${was.value}` : ch.hint,
+      };
+    });
+    const y = this.chipRow(r.y + 58, chips) + 10;
+    this.keep(addText(this, x, y, 'Отпусти — предметы сольются. С учётом соседей.', 20, C.inkDim, { wordWrap: { width: r.w - 2 * PANEL.pad } }));
   }
 
   /** Что изменится, если положить предмет сюда: метки над соседями и сводка над самим предметом. */
@@ -273,8 +371,51 @@ export class BackpackScene extends Phaser.Scene {
     return out;
   }
 
+  /** Поле «Основное оружие» слева от сетки: картинка выбранного; двойной клик по полю — снять выбор. */
+  private mainSlot!: Phaser.GameObjects.Container;
+  private mainSlotLast = 0;
+
+  private drawMainSlot(): void {
+    const m = BACKPACK_LAYOUT.mainSlot;
+    this.mainSlot.removeAll(true);
+    const item = mainItem();
+    if (!item) setMain(null);
+    const frame = this.add.rectangle(m.x, m.y, m.size, m.size, 0x000000, 0.55).setOrigin(0).setStrokeStyle(3, 0xe0b65a);
+    const label = addText(this, m.x + m.size / 2, m.labelY, 'Основное', 20, C.accent, { stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5);
+    this.mainSlot.add([frame, label]);
+    const hint = item
+      ? `Основное оружие: ${ITEMS[item.id].name}${item.inGrid ? '' : ' — вне сумок, в бою не работает'}. Это курсор в бою: им отбиваешь атаки. Двойной клик по другому оружию — сменить, по этому полю — снять.`
+      : 'Основное оружие не выбрано — в бою не отбить ни одной атаки. Двойной клик по оружию или щиту в сумках — сделать основным.';
+    if (item) {
+      const img = fit(this.add.image(m.x + m.size / 2, m.y + m.size / 2, itemKey(item.id)), m.size - 16, m.size - 16);
+      if (!item.inGrid) img.setAlpha(0.4);
+      this.mainSlot.add(img);
+    } else {
+      this.mainSlot.add(fit(this.add.image(m.x + m.size / 2, m.y + m.size / 2, statIconKey('parry')), m.size * 0.5, m.size * 0.5).setAlpha(0.35));
+    }
+    frame.setInteractive({ useHandCursor: !!item });
+    frame.on('pointerover', () => {
+      const b = frame.getBounds();
+      this.tip.setText(hint).setPosition(Math.max(PANEL.tipW / 2 + 20, b.centerX), b.top - 6).setVisible(true);
+    });
+    frame.on('pointerout', () => this.tip.setVisible(false));
+    frame.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (p.button !== 0 || !mainItem()) return;
+      const now = this.time.now;
+      if (now - this.mainSlotLast < FEEL.doubleClickMs) {
+        this.mainSlotLast = 0;
+        setMain(null);
+        sfx(this, 'ui_click');
+        this.tip.setVisible(false);
+        this.refresh();
+      } else this.mainSlotLast = now;
+    });
+    this.view.setMain(run.mainUid);
+  }
+
   /** Пересчитать соседство: серые отключённые, постоянные метки, счётчик, панель силы. */
   private refresh(): void {
+    this.drawMainSlot();
     this.power = computePower(run.items);
     for (const it of run.items) this.view.setDisabled(it.uid, !!this.power.powers.get(it.uid)?.disabled);
     this.view.setStaticLabels(this.staticLabels());
@@ -284,7 +425,8 @@ export class BackpackScene extends Phaser.Scene {
     this.countText.setText(`В сумках: ${inGrid}   Вне сумок: ${run.items.length - inGrid}`);
 
     // Предмет мог исчезнуть (слияние) — тогда снова сила снаряжения.
-    if (this.shownItem !== null && !run.items.some((i) => i.uid === this.shownItem)) this.shownItem = null;
+    if (this.pinnedItem !== null && !run.items.some((i) => i.uid === this.pinnedItem)) this.pinnedItem = null;
+    if (this.shownItem !== null && !run.items.some((i) => i.uid === this.shownItem)) this.shownItem = this.pinnedItem;
     this.showPanel(this.shownItem);
   }
 
@@ -293,6 +435,7 @@ export class BackpackScene extends Phaser.Scene {
   /** Пересобрать пергамент: uid — описание предмета, null — сила снаряжения. */
   private showPanel(uid: number | null): void {
     this.shownItem = uid;
+    if (this.mergePreview) return this.drawMergePanel();
     this.tip.setVisible(false);
     for (const o of this.panelObjs) o.destroy();
     this.panelObjs = [];
@@ -419,14 +562,16 @@ export class BackpackScene extends Phaser.Scene {
     const base = p?.base ?? starStats(it.id, star);
     const final = p?.final ?? base;
     // Итог с соседями; где число изменилось — зелёным или красным, а в подсказке — сколько было без соседей.
-    const baseChips = itemStatChips(it.id, base, it.charges);
-    const chips: PanelChip[] = itemStatChips(it.id, final, it.charges).map((ch) => {
-      const was = baseChips.find((b) => b.icon === ch.icon);
+    const baseChips = itemStatChips(it.id, base, it.charges, star);
+    const finalChips = itemStatChips(it.id, final, it.charges, star);
+    const pairs = matchChips(baseChips, finalChips);
+    const chips: PanelChip[] = finalChips.map((ch, i) => {
+      const was = pairs[i];
       const changed = was && was.value !== ch.value;
       const better = changed && parseFloat(ch.value.replace(/[^\d.]/g, '')) > parseFloat(was.value.replace(/[^\d.]/g, ''));
       return {
         icon: statIconKey(ch.icon),
-        tag: ch.tag ? tagKey(ch.tag) : undefined,
+        tag: ch.tag ? tagKey(ch.tag) : ch.icon2 ? statIconKey(ch.icon2) : undefined,
         value: ch.value,
         color: ch.icon === 'self' ? C.bad : changed ? (better === (ch.icon !== 'cooldown') ? C.good : C.bad) : C.text,
         hint: changed ? `${ch.hint}\nБез соседей: ${was.value}` : ch.hint,

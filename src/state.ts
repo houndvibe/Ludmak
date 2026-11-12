@@ -11,15 +11,14 @@ import {
   START_COINS,
   START_ITEMS,
   START_LIVES,
-  STAR_MULT,
 } from './config/balance';
 import { CLIENTS } from './data/clients';
-import { ITEM_IDS, type ItemId } from './data/items';
+import { ITEM_IDS, ITEMS, type ItemId } from './data/items';
 import type { ChainLink } from './systems/battle';
 import { findSpot, type OwnedItem } from './systems/backpack';
 import { TUTORIAL } from './data/tutorial';
-import { DEBUG_COINS } from './config/balance';
-import { fixedContract, generateQueue, levelForNight, type Contract } from './systems/contracts';
+import { DEBUG_COINS, FINAL_BOSS, PARRY_REWARD_MULT } from './config/balance';
+import { fixedContract, generateQueue, levelForNight, type Contract, type UsedQuests } from './systems/contracts';
 import { rollShopOffers } from './systems/shop';
 import { maxCharges, starOf } from './systems/synergy';
 
@@ -28,6 +27,10 @@ export interface DayOutcome {
   kind: 'win' | 'retreat' | 'death' | 'skip';
   defeated: number;
   stolen: number[];
+  /** По каждому заказу: отбито ли достаточно атак (условие Безголового). Нет — не выполнено. */
+  parryGoals?: boolean[];
+  /** Здоровье героя в конце дня (победа, отступление) — с ним начинается бой с финальным боссом. */
+  heroHp?: number;
 }
 
 export interface ContractResult {
@@ -43,6 +46,8 @@ export interface ContractResult {
   advance: boolean;
   /** Аванс, который надо вернуть (заказ не выполнен). */
   refund: number;
+  /** Награда умножена за отбитые атаки (Безголовый). */
+  parryBonus: boolean;
 }
 
 export interface NightSummary {
@@ -58,8 +63,10 @@ export interface NightSummary {
   /** Жизни до и после этой ночи (смерть в бою отнимает одну). */
   livesBefore: number;
   livesAfter: number;
-  /** null — забег продолжается. */
+  /** null — забег продолжается (в последнюю ночь — впереди бой с финальным боссом). */
   gameOver: 'win' | 'lose' | null;
+  /** Конец забега в бою с финальным боссом (победа над ним или последняя жизнь). */
+  final?: boolean;
 }
 
 export interface RunState {
@@ -85,6 +92,18 @@ export interface RunState {
   debug: boolean;
   /** Жизни на забег (START_LIVES). Смерть в бою отнимает одну; ноль — конец игры. */
   lives: number;
+  /** Квесты, уже показанные у окошка за забег (по заказчикам) — не повторяются. */
+  usedQuests: UsedQuests;
+  /** Письмо о ведьмаке прочитано (показывается в начале ночи 1). */
+  letterRead: boolean;
+  /** Здоровье для боя с финальным боссом: сколько осталось после дня последней ночи; null — полное. */
+  finalHp: number | null;
+  /** Финальный босс повержен: дом без заказов, дверь заперта, на стене записка-благодарность. */
+  finished: boolean;
+  /** Основное оружие (uid): курсор в бою и перк парирования. null — не выбрано: парировать нельзя. */
+  mainUid: number | null;
+  /** Заряды топора к концу дня — переходят в бой с финальным боссом (новый день начинается с нуля). */
+  axeCharges: number;
 }
 
 export let run: RunState = emptyRun();
@@ -105,6 +124,12 @@ function emptyRun(): RunState {
     tutorialStep: 0,
     debug: false,
     lives: START_LIVES,
+    usedQuests: {},
+    letterRead: false,
+    finalHp: null,
+    finished: false,
+    mainUid: null,
+    axeCharges: 0,
   };
 }
 
@@ -118,6 +143,8 @@ export function newRun(tutorial = false, debug = false): void {
   run.tutorial = tutorial && !debug;
   if (debug) run.coins = DEBUG_COINS;
   for (const id of START_ITEMS) addItem(id);
+  // Стартовое оружие сразу основное: парирование работает с первого боя.
+  run.mainUid = run.items.find((i) => ITEMS[i.id].parryPerk)?.uid ?? null;
   startNight();
 }
 
@@ -128,9 +155,11 @@ function startNight(): void {
     run.shopOffers = [...TUTORIAL.shop];
   } else {
     run.tutorial = false;
-    run.queue = generateQueue(run.night);
+    run.queue = generateQueue(run.night, Math.random, run.usedQuests);
     rollShop();
   }
+  // Показанные у окошка квесты больше не придут (даже отклонённые).
+  for (const c of run.queue) (run.usedQuests[c.client] ??= []).push(c.quest);
   run.queuePos = 0;
   run.accepted = [];
   run.rerolls = 0;
@@ -140,6 +169,43 @@ function startNight(): void {
 export function advanceNight(): void {
   run.night++;
   startNight();
+}
+
+/** Письмо о ведьмаке прочитано — больше не показывать в этом забеге. */
+export function markLetterRead(): void {
+  run.letterRead = true;
+}
+
+/** Впереди бой с финальным боссом: последняя ночь, итоги дня подведены, забег не кончился. */
+export function finalAhead(): boolean {
+  return run.night >= NIGHTS && !!run.summary && run.summary.gameOver === null;
+}
+
+/** Цепочка боя с финальным боссом: один враг без заказа и модификатора. */
+export function finalChain(): ChainLink[] {
+  return [{ enemy: FINAL_BOSS, contract: 0, mod: null }];
+}
+
+/**
+ * Итог боя с финальным боссом. Победа — победа в игре. Поражение — −1 жизнь; жизни остались — бой заново
+ * с полным здоровьем (true), кончились — конец игры. Возвращает, будет ли ещё попытка.
+ */
+export function resolveFinal(won: boolean): boolean {
+  const s = run.summary!;
+  if (won) {
+    // Игра не заканчивается экраном: Людьмак возвращается домой — заказов больше нет, дверь заперта.
+    run.summary = { ...s, gameOver: 'win', final: true, livesAfter: run.lives, coinsAfter: run.coins };
+    run.finished = true;
+    run.queue = [];
+    run.queuePos = 0;
+    run.accepted = [];
+    return false;
+  }
+  run.lives = Math.max(0, run.lives - 1);
+  run.finalHp = null;
+  if (run.lives > 0) return true;
+  run.summary = { ...s, gameOver: 'lose', final: true, livesAfter: 0, coinsAfter: run.coins };
+  return false;
 }
 
 // ─── Обучение пройдено (localStorage) ────────────────────────────────────────
@@ -247,12 +313,40 @@ export function canMerge(a: OwnedItem, b: OwnedItem): boolean {
 }
 
 /**
- * Заряды после слияния: сумма оставшихся × (множитель нового уровня / множитель прежнего) / 2, вверх.
- * Для ★1+★1 это ровно «сумма × множитель ★2 / 2».
+ * Заряды после слияния: сумма оставшихся × (максимум нового уровня / максимум прежнего) / 2, вверх, не больше максимума.
+ * Два полных ★1 дают полный ★2.
  */
-function mergedCharges(a: number | undefined, b: number | undefined, fromStar: number): number | undefined {
-  if (a === undefined && b === undefined) return undefined;
-  return Math.ceil((((a ?? 0) + (b ?? 0)) * (STAR_MULT[fromStar] / STAR_MULT[fromStar - 1])) / 2);
+function mergedCharges(id: ItemId, a: number | undefined, b: number | undefined, fromStar: number): number | undefined {
+  const from = maxCharges(id, fromStar);
+  const to = maxCharges(id, fromStar + 1);
+  if (from === undefined || to === undefined) return undefined;
+  return Math.min(to, Math.ceil((((a ?? 0) + (b ?? 0)) * (to / from)) / 2));
+}
+
+/** Может ли предмет быть основным оружием (оружие с перком парирования или щит). */
+export function canBeMain(item: OwnedItem): boolean {
+  return !!ITEMS[item.id].parryPerk;
+}
+
+/** Сделать предмет основным (null — снять выбор). */
+export function setMain(uid: number | null): void {
+  run.mainUid = uid;
+}
+
+/** Основное оружие, если оно ещё есть в забеге. */
+export function mainItem(): OwnedItem | null {
+  return run.items.find((i) => i.uid === run.mainUid) ?? null;
+}
+
+/** Каким станет target после слияния с dragged (забег не меняется) — для превью при перетаскивании. */
+export function mergedPreview(dragged: OwnedItem, target: OwnedItem): OwnedItem {
+  const star = starOf(target);
+  return { ...target, star: star + 1, charges: mergedCharges(target.id, dragged.charges, target.charges, star) };
+}
+
+/** Заряды покупки со слиянием: товар (полный ★1) на предмет ★1 — для подписи в магазине. */
+export function buyMergeCharges(target: OwnedItem): number | undefined {
+  return mergedCharges(target.id, ITEM_STATS[target.id].charges, target.charges, 1);
 }
 
 /** Слить dragged в target: target повышает уровень, dragged исчезает. Список меняется на месте. */
@@ -261,7 +355,8 @@ export function mergeItems(draggedUid: number, targetUid: number): boolean {
   const b = run.items.find((i) => i.uid === targetUid);
   if (!a || !b || !canMerge(a, b)) return false;
   const star = starOf(b);
-  b.charges = mergedCharges(a.charges, b.charges, star);
+  if (run.mainUid === a.uid) run.mainUid = b.uid; // основное слили в такое же — основным остаётся результат
+  b.charges = mergedCharges(b.id, a.charges, b.charges, star);
   b.star = star + 1;
   run.items.splice(run.items.indexOf(a), 1);
   return true;
@@ -274,7 +369,7 @@ export function buyAndMerge(slot: number, targetUid: number): boolean {
   if (!id || !target || target.id !== id || starOf(target) !== 1 || run.coins < ITEM_STATS[id].price) return false;
   run.coins -= ITEM_STATS[id].price;
   if (!run.debug) run.shopOffers[slot] = null;
-  target.charges = mergedCharges(ITEM_STATS[id].charges, target.charges, 1);
+  target.charges = mergedCharges(id, ITEM_STATS[id].charges, target.charges, 1);
   target.star = 2;
   return true;
 }
@@ -336,16 +431,17 @@ export function contractResults(outcome: DayOutcome): ContractResult[] {
     const stolen = outcome.stolen[i] ?? 0;
     const done = defeated >= total;
     const advance = !!CLIENTS[contract.client].condition.advance;
+    const parryBonus = done && !!CLIENTS[contract.client].condition.parryReward && !!outcome.parryGoals?.[i];
     let reward = 0;
     let penalty = 0;
     let refund = 0;
     // Аванс уже выплачен при принятии: награды сейчас нет, а провал — вернуть его.
-    if (done) reward = advance ? 0 : Math.max(0, contract.reward - stolen);
+    if (done) reward = advance ? 0 : Math.max(0, contract.reward * (parryBonus ? PARRY_REWARD_MULT : 1) - stolen);
     else {
       penalty = outcome.kind === 'death' ? contract.penalty : Math.ceil((contract.penalty * (total - defeated)) / total);
       if (advance) refund = contract.reward;
     }
-    return { contract, defeated, done, reward, penalty, stolen, advance, refund };
+    return { contract, defeated, done, reward, penalty, stolen, advance, refund, parryBonus };
   });
 }
 
@@ -379,9 +475,13 @@ export function resolveNight(outcome: DayOutcome): NightSummary {
 
   // Монеты не уходят в минус: неустойка и возврат аванса забирают максимум всё, что есть.
   run.coins = Math.max(0, run.coins + reward - penalty - refund - stolenFromAdvance);
+  // Последняя ночь: забег не кончается — впереди бой с финальным боссом со здоровьем, что осталось после дня.
   let gameOver: NightSummary['gameOver'] = null;
   if (run.lives <= 0) gameOver = 'lose';
-  else if (run.night >= NIGHTS) gameOver = 'win';
+  else if (run.night >= NIGHTS) {
+    const carried = outcome.kind === 'win' || outcome.kind === 'retreat' ? outcome.heroHp : undefined;
+    run.finalHp = carried ?? null;
+  }
 
   run.summary = {
     night: run.night,

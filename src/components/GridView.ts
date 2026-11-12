@@ -5,7 +5,7 @@
 import * as Phaser from 'phaser';
 import { fits, rotatedSize, type Mask, type Placement } from '../systems/backpack';
 import { FEEL } from '../config/feel';
-import { ICON_LINK_KEY } from '../config/assets';
+import { ICON_LINK_KEY, statIconKey } from '../config/assets';
 import { C, FONT } from '../ui';
 import { sfx } from './Sound';
 
@@ -66,8 +66,14 @@ export interface GridViewConfig<T extends Placement> {
   preview?: (it: T, col: number, row: number, rotated: boolean) => GridLabels;
   /** 'edit': можно ли слить перетаскиваемый предмет с этим. */
   canMerge?: (dragged: T, target: T) => boolean;
+  /** 'edit': двойной клик по предмету (выбор основного оружия). */
+  onDoubleClick?: (it: T) => void;
   /** 'edit': слить (перетаскиваемый исчезает, цель повышает уровень). */
   onMerge?: (dragged: T, target: T) => void;
+  /** 'edit': перетаскиваемый предмет над целью слияния (target) или ушёл с неё (оба null) — превью результата. */
+  onMergeHover?: (dragged: T | null, target: T | null) => void;
+  /** 'edit': метки над соседями цели, если слить (что у них изменится). Метка «Слияние → ★N» на цели — всегда. */
+  mergeLabels?: (dragged: T, target: T) => Map<number, GridLabel[]>;
   /** 'edit': после того как предмет переложили, повернули или слили. */
   onChange?: () => void;
   /** 'edit': предмет взяли мышью. */
@@ -93,6 +99,8 @@ class Piece {
   private badge: Phaser.GameObjects.Text;
   private starText: Phaser.GameObjects.Text;
   private labels: Phaser.GameObjects.Container;
+  /** Метка основного оружия: золотые клинки в правом верхнем углу. */
+  private mainMark: Phaser.GameObjects.Image;
   private fw = 0;
   private fh = 0;
   private progress = 1;
@@ -108,7 +116,8 @@ class Piece {
     this.badge = scene.add.text(0, 0, '', { ...bold, fontSize: '24px' }).setOrigin(1, 1);
     this.starText = scene.add.text(0, 0, '', { ...bold, fontSize: '24px', color: '#ffd45a' }).setOrigin(0, 0);
     this.labels = scene.add.container(0, 0);
-    this.cont = scene.add.container(0, 0, [this.img, this.shade, this.rarityFrame, this.frame, this.badge, this.starText, this.labels]);
+    this.mainMark = scene.add.image(0, 0, statIconKey('parry')).setVisible(false);
+    this.cont = scene.add.container(0, 0, [this.img, this.shade, this.rarityFrame, this.frame, this.badge, this.starText, this.mainMark, this.labels]);
   }
 
   /** Картинка рисуется в исходной форме w×h и поворачивается на 90°; остальное — по занимаемому месту. */
@@ -125,6 +134,8 @@ class Piece {
     const fs = Math.max(16, Math.round(cell * 0.3));
     this.badge.setPosition(this.fw / 2 - 6, this.fh / 2 - 2).setFontSize(fs);
     this.starText.setPosition(-this.fw / 2 + 4, -this.fh / 2 + 2).setFontSize(fs).setText(star > 1 ? `★${star}` : '');
+    const ms = Math.max(22, Math.round(cell * 0.32));
+    this.mainMark.setDisplaySize(ms, ms).setPosition(this.fw / 2 - ms / 2 - 3, -this.fh / 2 + ms / 2 + 3);
     this.drawShade();
   }
 
@@ -147,6 +158,11 @@ class Piece {
 
   setReady(ready: boolean): void {
     this.frame.setVisible(ready && !this.disabled);
+  }
+
+  /** Основное оружие — метка в углу. */
+  setMain(on: boolean): void {
+    this.mainMark.setVisible(on);
   }
 
   /** Отключённый предмет (сгорел) — серый. */
@@ -178,6 +194,12 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
   private cfg: GridViewConfig<T>;
   private pieces = new Map<number, Piece>();
   private dragging: { uid: number; saved: Placement } | null = null;
+  /** Нажали на предмет, но ещё не двигали: где нажали (перетаскивание начнётся после сдвига). */
+  private pressed: { uid: number; x: number; y: number } | null = null;
+  /** Последнее нажатие на предмет — для двойного клика. */
+  private lastDown: { uid: number; t: number } | null = null;
+  /** Основное оружие (метка в углу). */
+  private mainUid: number | null = null;
   /** Постоянные метки соседства (экран рюкзака); null — выключены. */
   private staticLabels: Map<number, GridLabel[]> | null = null;
   private hovered: number | null = null;
@@ -254,8 +276,19 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
       const cur = this.item(it.uid);
       if (ptr.button !== 0 || p.removing || !cur) return;
       if (this.cfg.mode === 'battle') this.cfg.onClick?.(cur);
-      if (this.cfg.mode === 'edit') this.pickUp(it.uid, ptr);
+      if (this.cfg.mode === 'edit') {
+        // Двойной клик — выбор основного оружия (предмет при этом берётся и кладётся на место).
+        const now = this.scene.time.now;
+        if (this.lastDown && this.lastDown.uid === it.uid && now - this.lastDown.t < FEEL.doubleClickMs) {
+          this.lastDown = null;
+          this.cfg.onDoubleClick?.(cur);
+        } else this.lastDown = { uid: it.uid, t: now };
+        // Клик сам по себе ничего не поднимает: перетаскивание — только когда мышь сдвинулась (FEEL.dragThreshold).
+        this.pressed = { uid: it.uid, x: ptr.x, y: ptr.y };
+        this.cfg.onPickUp?.(cur);
+      }
     });
+    if (this.mainUid === it.uid) p.setMain(true);
     this.add(p.cont);
     this.pieces.set(it.uid, p);
   }
@@ -425,6 +458,12 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
   }
 
   /** Вспышка и покачивание при срабатывании. */
+  /** Отметить основное оружие (null — снять метку). */
+  setMain(uid: number | null): void {
+    this.mainUid = uid;
+    for (const [id, p] of this.pieces) p.setMain(id === uid);
+  }
+
   flash(uid: number): void {
     const p = this.pieces.get(uid);
     if (!p || p.removing) return;
@@ -510,7 +549,6 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     this.bringToTop(p.cont);
     this.layoutDragged(ptr.x - this.x, ptr.y - this.y);
     sfx(this.scene, 'item_pickup');
-    this.cfg.onPickUp?.(it);
   }
 
   private layoutDragged(lx: number, ly: number): void {
@@ -577,8 +615,20 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     }
   }
 
+  /** Над какой целью слияния сейчас перетаскиваемый (ключ «uid>uid»); сцене сообщается только смена. */
+  private mergeHoverKey = '';
+
+  private notifyMergeHover(dragged: T | null, target: T | null): void {
+    const key = dragged && target ? `${dragged.uid}>${target.uid}` : '';
+    if (key === this.mergeHoverKey) return;
+    this.mergeHoverKey = key;
+    this.cfg.onMergeHover?.(dragged, target);
+  }
+
   /** Подсветка места и метки соседства, пока предмет над сеткой. */
   private drawPreview(): void {
+    const dragged = this.dragging ? this.item(this.dragging.uid) ?? null : null;
+    this.notifyMergeHover(dragged, dragged && this.overGrid(dragged) ? this.mergeTarget(dragged) : null);
     const g = this.preview!;
     g.clear();
     this.previewLinks = [];
@@ -599,7 +649,9 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
       const f = rotatedSize(ms.w, ms.h, merge.rotated);
       g.fillStyle(0xe0b65a, 0.5);
       this.fillCells(g, merge.col, merge.row, f.w, f.h);
-      this.showLabels({ neighbors: new Map([[merge.uid, [{ text: `Слияние → ★${(ms.star ?? 1) + 1}`, good: true }]]]), self: [] });
+      const neighbors = this.cfg.mergeLabels ? this.cfg.mergeLabels(it, merge) : new Map<number, GridLabel[]>();
+      neighbors.set(merge.uid, [{ text: `Слияние → ★${(ms.star ?? 1) + 1}`, good: true }]);
+      this.showLabels({ neighbors, self: [] });
       this.drawLinks();
       return;
     }
@@ -619,15 +671,22 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
   }
 
   private onMove(p: Phaser.Input.Pointer): void {
+    const pr = this.pressed;
+    if (pr && !this.dragging && p.isDown && Math.hypot(p.x - pr.x, p.y - pr.y) >= FEEL.dragThreshold) {
+      this.pressed = null;
+      this.pickUp(pr.uid, p);
+    }
     if (this.dragging) this.layoutDragged(p.x - this.x, p.y - this.y);
   }
 
   private onUp(p: Phaser.Input.Pointer): void {
+    if (p.button === 0) this.pressed = null; // клик без перетаскивания
     if (!this.dragging || p.button !== 0) return;
     const it = this.item(this.dragging.uid)!;
     const saved = this.dragging.saved;
     const merge = this.overGrid(it) ? this.mergeTarget(it) : null;
     this.dragging = null;
+    this.notifyMergeHover(null, null);
     this.preview!.clear();
     this.previewLinks = [];
     this.previewRect = null;

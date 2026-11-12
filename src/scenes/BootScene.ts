@@ -5,6 +5,13 @@ import { restoreMute } from '../components/Sound';
 import {
   ASSET_MANIFEST,
   HOME_LAYOUT,
+  MENU_ART,
+  menuArtKey,
+  menuEyesKey,
+  menuShardKey,
+  SEAL_STAMP_KEY,
+  SEAL_STAMP_PATH,
+  SHOP_LAYOUT,
   ITEM_CELL_PX,
   PORTRAIT_H,
   PORTRAIT_W,
@@ -15,6 +22,7 @@ import {
   BG_HOME_CLOSED_PATH,
   UI_HEADER_KEY,
   UI_PARCHMENT_KEY,
+  uiShopCardKey,
   uiButtonKey,
   uiIconKey,
   type UiIconId,
@@ -50,6 +58,11 @@ export class BootScene extends Phaser.Scene {
     this.load.image(uiSourceKey('header'), UI_ART.header.path);
     for (const [id, ic] of Object.entries(UI_ART.icons)) this.load.image(uiSourceKey(id), ic.path);
     this.load.image(uiSourceKey('parchment'), UI_ART.parchment.path);
+    for (const id of ['button', 'logo', 'sliderTrack', 'sliderFill', 'sliderEnds'] as const) this.load.image(menuArtKey(id), MENU_ART[id].path);
+    MENU_ART.eyes.forEach((e, n) => this.load.image(menuEyesKey(n), e.path));
+    MENU_ART.shards.forEach((_, n) => this.load.image(menuShardKey(n), `ui/menu/shard_${n}.png`));
+    this.load.image(SEAL_STAMP_KEY, SEAL_STAMP_PATH);
+    for (const s of ['plain', 'rare'] as const) this.load.image(uiSourceKey(`shop_card_${s}`), UI_ART.shopCard[s].path);
     this.load.image(BG_HOME_CLOSED_KEY, BG_HOME_CLOSED_PATH);
     for (const key of AUDIO_KEYS) this.load.audio(key, `${AUDIO_DIR}${key}.${AUDIO_FORMATS[0]}`);
   }
@@ -86,6 +99,13 @@ export class BootScene extends Phaser.Scene {
       cut(uiSourceKey(id), ic.crop, uiIconKey(id), Math.round((ic.crop.w * IH) / ic.crop.h), IH);
     }
     cut(uiSourceKey('parchment'), UI_ART.parchment.crop, UI_PARCHMENT_KEY, HOME_LAYOUT.card.w, HOME_LAYOUT.card.h);
+    // Карточки магазина — картинка целиком, до размера карточки.
+    for (const s of ['plain', 'rare'] as const) {
+      const src = uiSourceKey(`shop_card_${s}`);
+      if (!this.textures.exists(src)) continue;
+      const img = this.textures.get(src).getSourceImage() as HTMLImageElement;
+      cut(src, { x: 0, y: 0, w: img.width, h: img.height }, uiShopCardKey(s), UI_ART.shopCard.w, UI_ART.shopCard.h);
+    }
 
     const H = UI_ART.buttonHeight;
     for (const [s, b] of Object.entries(UI_ART.button) as [ButtonState, (typeof UI_ART.button)[ButtonState]][]) {
@@ -138,7 +158,7 @@ export class BootScene extends Phaser.Scene {
       [w, h] = [ENEMY_ITEMS[s.itemId].w * ITEM_CELL_PX, ENEMY_ITEMS[s.itemId].h * ITEM_CELL_PX];
     else if (s.kind === 'tag') [w, h] = [TAG_ICON_PX, TAG_ICON_PX];
     else if (s.kind === 'statIcon' || s.kind === 'category' || s.kind === 'link') [w, h] = [ICON_PX, ICON_PX];
-    else if (s.kind === 'home') [w, h] = [1920, 1080];
+    else if (s.kind === 'home' || s.kind === 'shop') [w, h] = [1920, 1080];
     else [w, h] = [s.w, s.h];
 
     const tex = this.textures.createCanvas(a.key, w, h)!;
@@ -185,6 +205,8 @@ export class BootScene extends Phaser.Scene {
       wrapText(ctx, def.name, w / 2, h / 2, w - 20, 22, 'bold');
     } else if (s.kind === 'home') {
       drawHomeStub(ctx, a.path);
+    } else if (s.kind === 'shop') {
+      drawShopStub(ctx, a.path);
     } else if (s.kind === 'tag') {
       drawBadge(ctx, w, TAGS[s.tagId].color, TAG_GLYPHS[s.tagId]);
     } else if (s.kind === 'category') {
@@ -244,6 +266,69 @@ function checkEnemyBags(): void {
 }
 
 /** Заглушка интерьера избы: стена, пол, дверь с окошком, доска, сундук, сумки — по HOME_LAYOUT. */
+/** Заглушка лавки (нет backgrounds/shop.webp): погреб, прилавок, силуэт торговца, мешок — по SHOP_LAYOUT. */
+function drawShopStub(ctx: CanvasRenderingContext2D, path: string): void {
+  const L = SHOP_LAYOUT;
+  ctx.fillStyle = '#1b1612'; // каменная стена погреба
+  ctx.fillRect(0, 0, 1920, 1080);
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+  ctx.lineWidth = 3;
+  for (let y = 40; y < 1080; y += 64) {
+    for (let x = (y / 64) % 2 ? 0 : 60; x < 1920; x += 120) ctx.strokeRect(x, y, 120, 64);
+  }
+  // Торговец: голова и плечи за краем прилавка.
+  const m = L.merchant;
+  const mx = m.x + m.w / 2;
+  ctx.fillStyle = '#0e0b0a';
+  ctx.beginPath();
+  ctx.ellipse(mx, m.y + 300, 70, 84, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(m.x + 10, m.y + m.h);
+  ctx.quadraticCurveTo(m.x + 20, m.y + 400, mx, m.y + 390);
+  ctx.quadraticCurveTo(m.x + m.w - 20, m.y + 400, m.x + m.w - 10, m.y + m.h);
+  ctx.fill();
+  ctx.fillStyle = '#d0a040'; // глаза
+  ctx.beginPath();
+  ctx.arc(mx - 24, m.y + 290, 7, 0, Math.PI * 2);
+  ctx.arc(mx + 24, m.y + 290, 7, 0, Math.PI * 2);
+  ctx.fill();
+  // Прилавок: столешница из досок.
+  const c = L.counter;
+  ctx.fillStyle = '#4a3322';
+  ctx.fillRect(c.x, c.y, c.w, c.h);
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  for (let y = c.y + 95; y < c.y + c.h; y += 95) {
+    ctx.beginPath();
+    ctx.moveTo(c.x, y);
+    ctx.lineTo(c.x + c.w, y);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = '#22170f';
+  ctx.lineWidth = 8;
+  ctx.strokeRect(c.x, c.y, c.w, c.h);
+  ctx.fillStyle = '#2e2016'; // передний край прилавка
+  ctx.fillRect(c.x - 10, c.y + c.h, c.w + 20, 26);
+  // Мешок: мешковина со скруглёнными краями.
+  const b = L.bag;
+  ctx.fillStyle = '#5a4a32';
+  ctx.beginPath();
+  ctx.roundRect(b.x, b.y, b.w, b.h, 60);
+  ctx.fill();
+  ctx.strokeStyle = '#2a2116';
+  ctx.lineWidth = 8;
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; // тёмное нутро мешка под плитками
+  ctx.beginPath();
+  ctx.roundRect(b.x + 12, b.y + 50, b.w - 24, b.h - 80, 30);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.font = `28px ${FONT}`;
+  ctx.textAlign = 'right';
+  ctx.fillText(`${path} (заглушка)`, 1896, 1050);
+}
+
 function drawHomeStub(ctx: CanvasRenderingContext2D, path: string): void {
   const L = HOME_LAYOUT;
   ctx.fillStyle = '#2b2119'; // бревенчатая стена

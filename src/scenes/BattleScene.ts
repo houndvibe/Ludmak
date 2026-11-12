@@ -3,8 +3,8 @@
 // активные применяются нажатием на предмет. Справа — враг и его сумка (только просмотр).
 import * as Phaser from 'phaser';
 import { GridView } from '../components/GridView';
-import { BATTLE_LAYOUT, BG_BATTLE_KEY, enemyItemKey, enemyKey, HERO_KEY, HORSE_ART, itemKey, UI_ART } from '../config/assets';
-import { BATTLE_FAST_SPEED } from '../config/balance';
+import { BATTLE_LAYOUT, BG_BATTLE_KEY, enemyItemKey, enemyKey, HERO_KEY, HORSE_ART, itemKey, statIconKey, UI_ART, type CursorBlade } from '../config/assets';
+import { BATTLE_FAST_SPEED, PARRY_PERK } from '../config/balance';
 import { CLIENTS } from '../data/clients';
 import { ENEMIES } from '../data/enemies';
 import { FEEL } from '../config/feel';
@@ -16,7 +16,7 @@ import { BattleSim, type BattleEvent, type EnemySlot } from '../systems/battle';
 import type { EnemyItemId } from '../data/enemyItems';
 import { footprint, MASK, rectMask, type OwnedItem } from '../systems/backpack';
 import { pairLinks, starOf } from '../systems/synergy';
-import { dayChain, destroyItem, resolveNight, retreatPenalty, run, spendCharge, type DayOutcome } from '../state';
+import { dayChain, destroyItem, finalChain, resolveFinal, resolveNight, retreatPenalty, run, spendCharge, type DayOutcome } from '../state';
 import {
   addBackground,
   addHorse,
@@ -33,12 +33,21 @@ import {
   goto,
   W,
   addLives,
+  addChips,
+  type UiChip,
   itemRarityFrame,
   TITLE,
 } from '../ui';
 
 const L = BATTLE_LAYOUT;
 const BAR_W = 360;
+
+/** Рамка блока у полоски здоровья: части (рамка, значок, число) и показана ли сейчас. */
+interface BlockMark {
+  parts: Phaser.GameObjects.GameObject[];
+  text: Phaser.GameObjects.Text;
+  shown: boolean;
+}
 /** Сколько пикселей проезжает сумка врага при смене врага. */
 const BAG_SLIDE = 500;
 /** Пауза перед следующим врагом того же заказа, мс. */
@@ -54,6 +63,9 @@ export class BattleScene extends Phaser.Scene {
   private heroImg!: Phaser.GameObjects.Image;
   private enemyImg!: Phaser.GameObjects.Image;
   private heroBar!: Phaser.GameObjects.Rectangle;
+  /** Блок у полоски здоровья: жёлтая рамка и значок щита с числом — у героя справа, у врага слева. */
+  private heroBlock!: BlockMark;
+  private enemyBlock!: BlockMark;
   private heroHpText!: Phaser.GameObjects.Text;
   private heroStatus!: Phaser.GameObjects.Text;
   private enemyBar!: Phaser.GameObjects.Rectangle;
@@ -61,6 +73,8 @@ export class BattleScene extends Phaser.Scene {
   private enemyName!: Phaser.GameObjects.Text;
   private enemyStatus!: Phaser.GameObjects.Text;
   private modBadge: Phaser.GameObjects.Container | null = null;
+  /** Колода за портретом врага: следующие враги того же заказа. */
+  private enemyDeck: Phaser.GameObjects.Image[] = [];
   private progressText!: Phaser.GameObjects.Text;
   private conditionText!: Phaser.GameObjects.Text;
   private info!: Phaser.GameObjects.Text;
@@ -72,9 +86,12 @@ export class BattleScene extends Phaser.Scene {
   /** Картинки атак врага в окне парирования: id атаки → иконка, кольцо и центр. */
   /** Летящие атаки врага: откуда летит, куда (точка между сетками), текущий радиус зоны клика. */
   private parryIcons = new Map<number, ParryIcon>();
-  /** Меч-курсор в зоне атак. */
+  /** Курсор основного оружия в зоне атак (клинок) и его отбивающая часть; null — основное не клинок или его нет. */
   private sword!: Phaser.GameObjects.Image;
+  private blade: CursorBlade | null = null;
   private swordShown = false;
+  /** Щит-курсор: основное оружие — щит. */
+  private shield: Phaser.GameObjects.Image | null = null;
   /** Идущая прокрутка меча (ПКМ) — останавливается новым взмахом или прокруткой. */
   private spinTween: Phaser.Tweens.Tween | null = null;
 
@@ -82,12 +99,23 @@ export class BattleScene extends Phaser.Scene {
     super('Battle');
   }
 
+  /** Бой с финальным боссом (после дня последней ночи): один враг без заказа, здоровье — сколько осталось. */
+  private final = false;
+
+  init(data: { final?: boolean }): void {
+    this.final = !!data?.final;
+  }
+
   create(): void {
     fadeIn(this);
     playMusic(this, 'music_day');
     const items = run.items.filter((i) => i.inGrid);
     this.itemIds = new Map(items.map((i) => [i.uid, i.id]));
-    this.sim = new BattleSim({ items, chain: dayChain(), clients: run.accepted.map((c) => c.client), night: run.night });
+    // Основное оружие — только из сетки; заряды топора переходят из дня в бой с финальным боссом.
+    const mainUid = items.some((i) => i.uid === run.mainUid) ? run.mainUid : null;
+    this.sim = this.final
+      ? new BattleSim({ items, chain: finalChain(), clients: [], night: run.night, heroHp: run.finalHp ?? undefined, mainUid, axeCharges: run.axeCharges })
+      : new BattleSim({ items, chain: dayChain(), clients: run.accepted.map((c) => c.client), night: run.night, mainUid });
     this.speed = 1;
     this.shownStatus = 'fight';
     this.overlay = null;
@@ -133,14 +161,21 @@ export class BattleScene extends Phaser.Scene {
     const hx = hp.x + hp.w / 2 + 30;
     addText(this, hx, hp.y - 110, 'Людьмак', 36, C.accent, TITLE);
     [this.heroBar, this.heroHpText] = this.makeBar(hx, hp.y - 40);
+    this.heroBlock = this.makeBlockMark(hx, hp.y - 40, 'right');
+    // Дебафы героя — плашками-тегами со значком (медлительность от щитов), под ними — статусы текстом.
+    this.heroDebuffs = this.add.container(0, 0);
+    this.debuffKey = '';
+    this.debuffPos = { x: hx, y: hp.y };
     this.heroStatus = addText(this, hx, hp.y, '', 24, C.block);
 
     // Враг: портрет, слева от него имя, здоровье, статусы (выравнивание по правому краю).
     const ep = L.enemyPortrait;
-    this.enemyImg = this.add.image(ep.x, ep.y, enemyKey(this.sim.enemy.id));
+    this.enemyImg = this.add.image(ep.x, ep.y, enemyKey(this.sim.enemy.id)).setDepth(2);
+    this.enemyDeck = [];
     const ex = ep.x - ep.w / 2 - 30;
     this.enemyName = addText(this, ex, ep.y - 110, '', 36, C.bad, TITLE).setOrigin(1, 0);
     [this.enemyBar, this.enemyHpText] = this.makeBar(ex - BAR_W, ep.y - 40);
+    this.enemyBlock = this.makeBlockMark(ex - BAR_W, ep.y - 40, 'left');
     this.enemyStatus = addText(this, ex, ep.y, '', 24, C.block, { align: 'right' }).setOrigin(1, 0);
 
     // Подложка рюкзака — лошадь с сумками, сетка героя поверх.
@@ -172,6 +207,7 @@ export class BattleScene extends Phaser.Scene {
       },
     });
     for (const s of this.sim.slots) if (Number.isFinite(s.charges)) this.heroView.setCharges(s.item.uid, s.charges);
+    this.heroView.setMain(this.sim.mainUid);
 
     this.showEnemy();
     this.afterSimChange(); // события начала боя: сгорело, отравлено, взрыв
@@ -283,25 +319,31 @@ export class BattleScene extends Phaser.Scene {
   private onBattleClick(p: Phaser.Input.Pointer): void {
     // ПКМ в зоне атак — прокрутка меча (для красоты, на бой не влияет).
     if (p.button === 2) {
-      if (this.inParryZone(p)) {
+      if (this.inParryZone(p) && this.weaponMode()) {
         this.moveSword(p);
         this.spinSword();
       }
       return;
     }
     if (p.button !== 0) return;
-    const inZone = this.inParryZone(p);
+    // Без основного оружия (или оно отключено) парировать нельзя.
+    if (!this.inParryZone(p)) return;
+    const shield = this.shieldMode();
+    if (!shield && !this.weaponMode()) return;
     let blade: Phaser.Geom.Line | null = null;
-    if (inZone) {
-      this.moveSword(p);
+    this.moveSword(p);
+    if (shield) this.punchShield();
+    else {
       blade = this.bladeLine();
       this.swingSword();
     }
+    // Щит парирует всей областью: атака засчитана, если её круг касается круга щита.
+    const shieldR = shield ? (FEEL.parry.shieldSize / 2) * UI_ART.cursorShield.hitShare : 0;
     let hit: number | null = null;
     let best = Infinity;
     for (const [id, icon] of this.parryIcons) {
       const c = { x: icon.cont.x, y: icon.cont.y };
-      const d = blade ? segmentDist(blade, c.x, c.y) : Math.hypot(p.x - c.x, p.y - c.y);
+      const d = blade ? segmentDist(blade, c.x, c.y) : Math.hypot(p.x - c.x, p.y - c.y) - shieldR;
       if (d <= icon.r && d < best) {
         best = d;
         hit = id;
@@ -312,9 +354,9 @@ export class BattleScene extends Phaser.Scene {
     this.afterSimChange();
   }
 
-  /** Лезвие меча в положении покоя (мир): от кончика до конца лезвия (UI_ART.cursorSword.tip → bladeEnd). */
+  /** Отбивающая часть курсора в положении покоя (мир): от кончика до bladeEnd (UI_ART.cursorWeapons). */
   private bladeLine(): Phaser.Geom.Line {
-    const S = UI_ART.cursorSword;
+    const S = this.blade!;
     const k = this.sword.scale;
     const a = Phaser.Math.DegToRad(S.angle);
     const world = (q: { x: number; y: number }) => {
@@ -333,24 +375,36 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * Меч-курсор — картинка стального меча (UI_ART.cursorSword). Держится за рукоять: вращается вокруг неё, а в покое
-   * кончик клинка ровно на курсоре — точка клика.
+   * Курсор — картинка основного оружия (UI_ART.cursorWeapons): держится за рукоять, вращается вокруг неё, а в покое
+   * кончик ровно на курсоре — точка клика. Основное — щит: картинка щита, центр на курсоре. Нет основного — обычная стрелка.
    */
   private createSword(): void {
-    const S = UI_ART.cursorSword;
     const P = FEEL.parry;
-    this.sword = this.add.image(0, 0, itemKey(S.item)).setOrigin(S.grip.x, S.grip.y).setDepth(2500).setVisible(false);
-    this.sword.setScale(P.swordSize / this.sword.height).setAngle(S.angle);
+    const main = this.sim.slots.find((s) => s.item.uid === this.sim.mainUid);
+    this.blade = main && main.def.parryPerk !== 'shield' ? UI_ART.cursorWeapons[main.def.id] ?? null : null;
+    const S = this.blade ?? UI_ART.cursorWeapons.steel_sword!;
+    this.sword = this.add
+      .image(0, 0, itemKey(this.blade && main ? main.def.id : 'steel_sword'))
+      .setOrigin(S.grip.x, S.grip.y)
+      .setDepth(2500)
+      .setVisible(false);
+    this.sword.setScale(S.size / this.sword.height).setAngle(S.angle);
     this.swordShown = false;
     this.spinTween = null;
+    this.shield =
+      main && main.def.parryPerk === 'shield'
+        ? fit(this.add.image(0, 0, itemKey(main.def.id)), P.shieldSize, P.shieldSize).setDepth(2500).setVisible(false)
+        : null;
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.moveSword(p));
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.input.setDefaultCursor('default'));
   }
 
   /** Меч виден только в зоне атак; там же прячется системный курсор. Рукоять ставится так, чтобы кончик (в покое) был на курсоре. */
   private moveSword(p: { x: number; y: number }): void {
-    const S = UI_ART.cursorSword;
-    const inZone = this.inParryZone(p);
+    const S = this.blade ?? UI_ART.cursorWeapons.steel_sword!;
+    const shield = this.shieldMode();
+    const weapon = this.weaponMode();
+    const inZone = this.inParryZone(p) && (shield || weapon);
     // От рукояти до кончика по картинке (px с учётом масштаба), повёрнуто на угол покоя.
     const k = this.sword.scale;
     const dx = (S.tip.x - S.grip.x) * this.sword.width * k;
@@ -358,17 +412,39 @@ export class BattleScene extends Phaser.Scene {
     const a = Phaser.Math.DegToRad(S.angle);
     const tx = dx * Math.cos(a) - dy * Math.sin(a);
     const ty = dx * Math.sin(a) + dy * Math.cos(a);
-    this.sword.setPosition(p.x - tx, p.y - ty).setVisible(inZone);
+    this.sword.setPosition(p.x - tx, p.y - ty).setVisible(inZone && weapon);
+    this.shield?.setPosition(p.x, p.y).setVisible(inZone && shield);
     if (inZone !== this.swordShown) {
       this.swordShown = inZone;
       this.input.setDefaultCursor(inZone ? 'none' : 'default');
     }
   }
 
+  /** Основное оружие — щит и он работает (не отключён условием заказа или соседом). */
+  private shieldMode(): boolean {
+    return this.shield !== null && this.sim.mainSlot?.def.parryPerk === 'shield';
+  }
+
+  /** Основное оружие — клинок и оно работает. */
+  private weaponMode(): boolean {
+    return this.blade !== null && !!this.sim.mainSlot;
+  }
+
+  /** Удар щитом на клик: толкается вперёд (увеличивается) и возвращается. */
+  private punchShield(): void {
+    const sh = this.shield;
+    if (!sh) return;
+    const P = FEEL.parry;
+    const base = P.shieldSize / Math.max(sh.width, sh.height);
+    this.tweens.killTweensOf(sh);
+    sh.setScale(base);
+    this.tweens.add({ targets: sh, scale: base * P.shieldPunch, duration: P.shieldPunchMs / 2, yoyo: true, ease: 'Quad.easeOut' });
+  }
+
   /** Взмах: рукоять на месте, клинок рубит вправо (по часовой) и возвращается в покой. */
   private swingSword(): void {
     const P = FEEL.parry;
-    const base = UI_ART.cursorSword.angle;
+    const base = this.blade!.angle;
     this.tweens.killTweensOf(this.sword);
     this.spinTween?.stop();
     this.spinTween = null;
@@ -385,7 +461,7 @@ export class BattleScene extends Phaser.Scene {
   /** Прокрутка на 360° вокруг рукояти с шлейфом: за мечом остаются гаснущие светлые копии. */
   private spinSword(): void {
     const P = FEEL.parry;
-    const base = UI_ART.cursorSword.angle;
+    const base = this.blade!.angle;
     this.tweens.killTweensOf(this.sword);
     this.spinTween?.stop();
     this.sword.setAngle(base);
@@ -477,6 +553,34 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /** Полоска здоровья: x — левый край. */
+  /** Рамка блока вокруг полоски здоровья (x — левый край полоски) и значок щита с числом сбоку (side). */
+  private makeBlockMark(x: number, y: number, side: 'left' | 'right'): BlockMark {
+    const F = FEEL.blockMark;
+    const frame = this.add.graphics().setAlpha(0);
+    const pad = F.width / 2 + 2;
+    frame.lineStyle(F.width, F.color, 1).strokeRect(x - pad, y - 17 - pad, BAR_W + pad * 2, 34 + pad * 2);
+    const ix = side === 'right' ? x + BAR_W + F.gap + F.icon / 2 : x - F.gap - F.icon / 2;
+    const icon = fit(this.add.image(ix, y, statIconKey('block')), F.icon, F.icon).setAlpha(0);
+    const text = addText(this, ix, y + F.icon / 2 - 4, '', F.textSize, '#' + F.color.toString(16).padStart(6, '0'), {
+      fontStyle: 'bold',
+      stroke: '#000',
+      strokeThickness: 4,
+    })
+      .setOrigin(0.5, 0)
+      .setAlpha(0);
+    return { parts: [frame, icon, text], text, shown: false };
+  }
+
+  /** Показать блок (рамка, значок, число) или спрятать, когда блок кончился. */
+  private setBlockMark(m: BlockMark, block: number): void {
+    const on = block > 0;
+    if (on) m.text.setText(`${block}`);
+    if (on === m.shown) return;
+    m.shown = on;
+    this.tweens.killTweensOf(m.parts);
+    this.tweens.add({ targets: m.parts, alpha: on ? 1 : 0, duration: FEEL.blockMark.fadeMs });
+  }
+
   private makeBar(x: number, y: number): [Phaser.GameObjects.Rectangle, Phaser.GameObjects.Text] {
     this.add.rectangle(x, y, BAR_W, 34, 0x000000, 0.7).setOrigin(0, 0.5).setStrokeStyle(2, C.border);
     const bar = this.add.rectangle(x, y, BAR_W, 34, 0xb03a3a).setOrigin(0, 0.5);
@@ -507,13 +611,20 @@ export class BattleScene extends Phaser.Scene {
       badge.on('pointerout', () => this.info.setText(''));
       this.modBadge = badge;
     }
+    this.drawEnemyDeck();
+    if (this.final) {
+      this.progressText.setText(`Финальный бой: ${ENEMIES[def.id].name.toLowerCase()}`);
+      this.conditionBase = '';
+      this.conditionText.setVisible(false);
+    }
     const inContract = sim.chain.filter((c) => c.contract === contract);
     const nth = sim.chain.slice(0, sim.index + 1).filter((c) => c.contract === contract).length;
-    const client = CLIENTS[run.accepted[contract].client];
+    const client = this.final ? null : CLIENTS[run.accepted[contract].client];
+    if (client) {
     this.progressText.setText(`Заказ ${contract + 1}/${run.accepted.length}: ${client.name} · враг ${nth} из ${inContract.length}`);
-    // Длинное условие («чтобы никто не услышал») не должно заезжать на полоски здоровья: уменьшаем шрифт.
-    this.conditionText.setFontSize(24).setText(`Заказ ${client.genitive}: ${client.condition.title.toLowerCase()}`);
-    if (this.conditionText.width > L.conditionMaxW) this.conditionText.setFontSize(Math.floor((24 * L.conditionMaxW) / this.conditionText.width));
+    this.conditionBase = `Заказ ${client.genitive}: ${client.condition.title.toLowerCase()}`;
+    this.setConditionText(this.conditionLine());
+    }
 
     const old = this.enemyView;
     if (old) {
@@ -528,7 +639,7 @@ export class BattleScene extends Phaser.Scene {
       mode: 'view',
       items: () => sim.enemy.slots,
       shape: (s) => ({ w: s.def.w, h: s.def.h, key: enemyItemKey(s.def.id) }),
-      describe: (s) => `${s.def.name}: ${describeEnemyItem(s.def.id, mod)}`,
+      describe: (s) => `${s.def.name}: ${describeEnemyItem(s.def.id, mod)}${s.boost ? ` · от подковы +${Math.round(s.boost * 100)}% (уже в уроне)` : ''}`,
       onHover: (t) => this.info.setText(t ?? ''),
     });
     if (old) {
@@ -564,10 +675,12 @@ export class BattleScene extends Phaser.Scene {
       if (this.sim.nextIsNewContract) this.showPause();
       else this.time.delayedCall(NEXT_ENEMY_DELAY_MS, () => this.nextEnemy());
     } else if (status === 'won') {
-      this.finish({ kind: 'win', defeated: this.sim.defeated, stolen: this.sim.stolen }, 'Все заказы выполнены');
+      if (this.final) this.finishFinal(true);
+      else this.finish({ kind: 'win', defeated: this.sim.defeated, stolen: this.sim.stolen, parryGoals: this.sim.parryGoals, heroHp: this.sim.heroHp }, 'Все заказы выполнены');
     } else if (status === 'lost') {
       sfx(this, 'hero_death');
-      this.finish({ kind: 'death', defeated: this.sim.defeated, stolen: this.sim.stolen }, 'Людьмак пал в бою');
+      if (this.final) this.finishFinal(false);
+      else this.finish({ kind: 'death', defeated: this.sim.defeated, stolen: this.sim.stolen, parryGoals: this.sim.parryGoals }, 'Людьмак пал в бою');
     }
   }
 
@@ -578,7 +691,7 @@ export class BattleScene extends Phaser.Scene {
     sfx(this, 'enemy_death');
     const link = sim.chain[sim.index];
     this.banner(`Победа над: ${enemyName(link.enemy, link.mod).toLowerCase()}`, C.text, 0);
-    if (sim.status === 'won' || sim.nextIsNewContract) {
+    if (!this.final && (sim.status === 'won' || sim.nextIsNewContract)) {
       this.time.delayedCall(FEEL.banner.staggerMs, () => sfx(this, 'contract_done'));
       this.banner('Заказ выполнен', C.good, FEEL.banner.staggerMs);
     }
@@ -728,11 +841,53 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  /** Следующий враг цепочки: сумка старого уезжает, нового — приезжает. */
+  /**
+   * Колода позади портрета: следующие враги того же заказа, как карты — каждая дальше сдвинута, повёрнута и темнее.
+   * Ближняя к текущему — сверху колоды.
+   */
+  private drawEnemyDeck(): void {
+    for (const c of this.enemyDeck) c.destroy();
+    this.enemyDeck = [];
+    const sim = this.sim;
+    const D = FEEL.enemyDeck;
+    const ep = L.enemyPortrait;
+    const { contract } = sim.chain[sim.index];
+    const next: typeof sim.chain = [];
+    for (let i = sim.index + 1; i < sim.chain.length && sim.chain[i].contract === contract; i++) next.push(sim.chain[i]);
+    next.slice(0, D.max).forEach((link, i) => {
+      const n = i + 1;
+      const card = fit(this.add.image(ep.x + D.offsetX * n, ep.y + D.offsetY * n, enemyKey(link.enemy)), ep.w, ep.h)
+        .setAngle(D.angleDeg * n)
+        .setTint(D.dark)
+        .setDepth(1.9 - i * 0.01);
+      this.enemyDeck.push(card);
+    });
+  }
+
+  /** Следующий враг цепочки: сумка старого уезжает, нового — приезжает; портрет выезжает из колоды на место текущего. */
   private nextEnemy(): void {
+    const fromDeck = this.enemyDeck.length > 0 && this.sim.chain[this.sim.index + 1]?.contract === this.sim.chain[this.sim.index].contract;
     this.sim.advance();
     this.shownStatus = this.sim.status;
     this.showEnemy();
+    if (fromDeck) {
+      const D = FEEL.enemyDeck;
+      const ep = L.enemyPortrait;
+      this.enemyImg.setPosition(ep.x + D.offsetX, ep.y + D.offsetY).setAngle(D.angleDeg).setTint(D.dark);
+      this.tweens.add({
+        targets: this.enemyImg,
+        x: ep.x,
+        y: ep.y,
+        angle: 0,
+        duration: D.promoteMs,
+        ease: 'Cubic.easeOut',
+        onUpdate: (tw) => {
+          const v = Math.round(Phaser.Math.Linear((D.dark >> 16) & 0xff, 255, tw.progress));
+          this.enemyImg.setTint((v << 16) | (v << 8) | v);
+        },
+        onComplete: () => this.enemyImg.clearTint(),
+      });
+    }
   }
 
   /** Привал между заказами: пауза с выбором «Дальше / Отступить». Здоровье не восстанавливается. */
@@ -759,7 +914,7 @@ export class BattleScene extends Phaser.Scene {
     const retreat = new Button(this, 160, 80, 290, 80, blockedBy ? 'Отступить нельзя' : `Отступить (−${penalty})`, () => {
       this.closeOverlay();
       sfx(this, 'retreat');
-      this.finish({ kind: 'retreat', defeated, stolen: sim.stolen }, 'Людьмак отступил');
+      this.finish({ kind: 'retreat', defeated, stolen: sim.stolen, parryGoals: sim.parryGoals, heroHp: sim.heroHp }, 'Людьмак отступил');
     }, 30).setEnabled(!blockedBy);
     box.add(retreat);
     if (blockedBy) {
@@ -774,8 +929,25 @@ export class BattleScene extends Phaser.Scene {
     this.overlay = null;
   }
 
+  /**
+   * Конец боя с финальным боссом: победа — победа в игре; поражение — −1 жизнь и бой заново с полным здоровьем,
+   * пока есть жизни, иначе конец игры.
+   */
+  private finishFinal(won: boolean): void {
+    this.refresh();
+    const again = resolveFinal(won);
+    const name = ENEMIES[this.sim.enemy.id].name.toLowerCase();
+    const message = won ? `${name[0].toUpperCase()}${name.slice(1)} повержен` : again ? 'Людьмак пал — ещё одна попытка' : 'Людьмак пал в бою';
+    addText(this, L.centerX, 640, message, 60, won ? C.good : C.accent, { ...TITLE, stroke: '#000', strokeThickness: 8 })
+      .setOrigin(0.5)
+      .setDepth(90);
+    // Победа — домой (эпилог: дверь заперта, записка на стене); последняя жизнь — конец игры.
+    this.time.delayedCall(1800, () => goto(this, again ? 'Battle' : won ? 'Home' : 'GameOver', again ? { final: true } : undefined));
+  }
+
   private finish(outcome: DayOutcome, message: string): void {
     this.refresh();
+    run.axeCharges = this.sim.axeCharges;
     addText(this, L.centerX, 640, message, 60, C.accent, { ...TITLE, stroke: '#000', strokeThickness: 8 })
       .setOrigin(0.5)
       .setDepth(90);
@@ -787,12 +959,75 @@ export class BattleScene extends Phaser.Scene {
 
   // ─── Отрисовка ───────────────────────────────────────────────────────────
 
+  /** Плашка условия заказа без счётчика (счётчик отбитых атак у Безголового дописывается на лету). */
+  private conditionBase = '';
+
+  /** Строка плашки условия: у Безголового — «отбито X из Y» по его заказу. */
+  private conditionLine(): string {
+    const sim = this.sim;
+    if (!sim.condition.parryReward) return this.conditionBase;
+    const k = sim.chain[sim.index].contract;
+    return `${this.conditionBase} · отбито ${sim.parried[k]} из ${sim.attacks[k]}`;
+  }
+
+  /** Длинное условие («чтобы никто не услышал») не должно заезжать на полоски здоровья: уменьшаем шрифт. */
+  private setConditionText(text: string): void {
+    if (this.conditionText.text === text) return;
+    this.conditionText.setFontSize(24).setText(text);
+    if (this.conditionText.width > L.conditionMaxW) this.conditionText.setFontSize(Math.floor((24 * L.conditionMaxW) / this.conditionText.width));
+  }
+
+  /** Плашки дебафов героя под полоской здоровья; статусы текстом сдвигаются под них. */
+  private heroDebuffs!: Phaser.GameObjects.Container;
+  private debuffKey = '';
+  private debuffPos = { x: 0, y: 0 };
+
+  private syncDebuffs(): void {
+    const slow = Math.round(this.sim.slowSec * 10) / 10;
+    const axe = this.sim.mainSlot?.def.parryPerk === 'axe' ? this.sim.axeCharges : -1;
+    const key = `${slow}|${axe}|${!this.sim.mainSlot}`;
+    if (key === this.debuffKey) return;
+    this.debuffKey = key;
+    this.heroDebuffs.removeAll(true);
+    const chips: UiChip[] = [];
+    if (slow > 0) {
+      chips.push({
+        icon: statIconKey('slow'),
+        value: `Медлительность +${slow} с`,
+        color: C.bad,
+        hint: `Медлительность от щитов в рюкзаке: твои предметы с уроном бьют на ${slow} с реже.`,
+      });
+    }
+    if (axe >= 0) {
+      chips.push({
+        icon: statIconKey('parry'),
+        icon2: statIconKey('charges'),
+        value: `${axe}/${PARRY_PERK.axeCharges}`,
+        color: axe >= PARRY_PERK.axeCharges ? C.good : C.text,
+        hint: `Заряды топора за парирования: ${axe} из ${PARRY_PERK.axeCharges}. Набрал — следующий удар топора ×${PARRY_PERK.axeMult}. Пропустил атаку — заряды сгорают.`,
+      });
+    }
+    if (!this.sim.mainSlot) {
+      chips.push({
+        icon: statIconKey('parry'),
+        value: 'Нечем отбивать',
+        color: C.bad,
+        hint: 'Основного оружия нет или оно отключено — атаки не отбить. Основное выбирается двойным кликом в сумках.',
+        cross: true,
+      });
+    }
+    const { h } = addChips(this, this.debuffPos.x, this.debuffPos.y, chips, { h: 34, container: this.heroDebuffs });
+    this.heroStatus.setY(this.debuffPos.y + (chips.length ? h + 8 : 0));
+  }
+
   private refresh(): void {
     const sim = this.sim;
+    this.syncDebuffs();
+    this.setConditionText(this.conditionLine());
     this.heroBar.width = (BAR_W * sim.heroHp) / sim.heroMaxHp;
+    this.setBlockMark(this.heroBlock, sim.block);
     this.heroHpText.setText(`${sim.heroHp} / ${sim.heroMaxHp}`);
     const status: string[] = [];
-    if (sim.block > 0) status.push(`Блок: ${sim.block}`);
     if (sim.weaponBuff.time > 0) status.push(`Оружие ×${sim.weaponBuff.mult}: ${sim.weaponBuff.time.toFixed(1)} с`);
     this.heroStatus.setText(status.join('\n'));
 
@@ -808,18 +1043,25 @@ export class BattleScene extends Phaser.Scene {
 
     const e = sim.enemy;
     this.enemyBar.width = (BAR_W * e.hp) / e.maxHp;
+    this.setBlockMark(this.enemyBlock, e.block);
     this.enemyHpText.setText(`${e.hp} / ${e.maxHp}`);
     const es: string[] = [];
-    if (e.block > 0) es.push(`Блок: ${e.block}`);
     if (e.stun > 0) es.push(`Оглушён: ${e.stun.toFixed(1)} с`);
     if (e.haste > 0) es.push(`Разбужен: ${e.haste.toFixed(1)} с`);
+    if (e.torchSlow > 0) es.push(`Замедлен факелом: +${e.torchSlow.toFixed(1)} с`);
     this.enemyStatus.setText(es.join('\n'));
 
     // Сумка врага: щит — своя перезарядка; действия — заполняется только то, что враг готовит сейчас.
     const next = sim.nextAction();
     for (const s of e.slots) {
       const p =
-        s.def.mode === 'passive' ? s.timer / s.stats.cooldown! : s.def.mode === 'onHit' ? 1 : s === next ? e.actionTimer / s.stats.cooldown! : 0;
+        s.def.mode === 'passive' || s.own
+          ? s.timer / s.stats.cooldown!
+          : s.def.mode === 'onHit' || s.def.mode === 'aura'
+            ? 1
+            : s === next
+              ? e.actionTimer / s.stats.cooldown!
+              : 0;
       this.enemyView?.setProgress(s.uid, p);
     }
   }
