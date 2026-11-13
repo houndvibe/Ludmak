@@ -24,9 +24,7 @@ import {
   tagKey,
   UI_ART,
   UI_HEADER_KEY,
-  uiButtonKey,
   uiIconKey,
-  type ButtonState,
   type StatIconId,
   MENU_ART,
   menuArtKey,
@@ -125,14 +123,10 @@ export function addText(
   });
 }
 
-/**
- * Кнопка. Если художница нарисовала плашку (UI_ART), фон — её картинка с неподвижными углами (три состояния:
- * обычная, наведена, неактивна); иначе — прямоугольник, нарисованный кодом.
- */
+/** Кнопка интерфейса с общей рамкой из главного меню. */
 export class Button extends Phaser.GameObjects.Container {
   private bg: Phaser.GameObjects.Rectangle;
-  private plates: Partial<Record<ButtonState, Phaser.GameObjects.NineSlice>> =
-    {};
+  private plate: Phaser.GameObjects.NineSlice | null = null;
   private label: Phaser.GameObjects.Text;
   private enabled = true;
   private hovered = false;
@@ -148,44 +142,38 @@ export class Button extends Phaser.GameObjects.Container {
     size = 28,
   ) {
     super(scene, x, y);
-    const art = scene.textures.exists(uiButtonKey("normal"));
+    const art = scene.textures.exists(menuArtKey("button"));
     // Без картинки — видимый прямоугольник; с картинкой — невидимая зона нажатия под плашками.
     this.bg = art
       ? scene.add.rectangle(0, 0, w, h, 0xffffff, 0.001)
       : scene.add.rectangle(0, 0, w, h, C.btn).setStrokeStyle(2, C.border);
     this.add(this.bg);
     if (art) {
-      // Плашка растягивается до w×h с неподвижными углами: тянем её в масштабе высоты buttonHeight, затем уменьшаем.
-      const H = UI_ART.buttonHeight;
+      // Используем ту же девятисегментную рамку, что и кнопки главного меню.
+      const source = scene.textures.get(menuArtKey("button")).getSourceImage();
+      const H = source.height;
       const k = h / H;
-      for (const s of ["normal", "hover", "disabled"] as ButtonState[]) {
-        const key = scene.textures.exists(uiButtonKey(s))
-          ? uiButtonKey(s)
-          : uiButtonKey("normal");
-        const sx = Math.round(H * UI_ART.slice.x);
-        const sy = Math.round(H * UI_ART.slice.y);
-        const plate = scene.add
-          .nineslice(
-            0,
-            0,
-            key,
-            undefined,
-            Math.max(w / k, sx * 2 + 2),
-            H,
-            sx,
-            sx,
-            sy,
-            sy,
-          )
-          .setScale(k);
-        this.plates[s] = plate;
-        this.add(plate);
-      }
+      const slice = MENU_ART.button.slice;
+      this.plate = scene.add
+        .nineslice(
+          0,
+          0,
+          menuArtKey("button"),
+          undefined,
+          Math.max(w / k, slice * 2 + 2),
+          H,
+          slice,
+          slice,
+          slice,
+          slice,
+        )
+        .setScale(k);
+      this.add(this.plate);
     }
-    this.label = addText(scene, 0, 0, text, size, C.text, {
+    this.label = addText(scene, 0, 0, text, size, art ? MENU_ART.textColor : C.text, {
       ...TITLE,
       stroke: "#000000",
-      strokeThickness: art ? 4 : 0,
+      strokeThickness: art ? 2 : 0,
     }).setOrigin(0.5);
     this.add(this.label);
     this.showState();
@@ -209,26 +197,28 @@ export class Button extends Phaser.GameObjects.Container {
 
   setEnabled(v: boolean): this {
     this.enabled = v;
-    this.label.setColor(v ? C.text : C.dim);
+    this.label.setColor(v ? (this.plate ? MENU_ART.textColor : C.text) : C.dim);
     this.showState();
     return this;
   }
 
-  /** Фон по состоянию: неактивна, наведена или обычная. */
+  /** Рамка остаётся общей; наведение слегка увеличивает кнопку, отключённая тускнеет. */
   private showState(): void {
-    const state: ButtonState = !this.enabled
-      ? "disabled"
-      : this.hovered
-        ? "hover"
-        : "normal";
-    if (this.plates.normal) {
-      for (const [s, p] of Object.entries(this.plates))
-        p!.setVisible(s === state);
+    if (this.plate) {
+      this.plate.setAlpha(this.enabled ? 1 : 0.5);
+      this.label?.setColor(
+        this.enabled
+          ? this.hovered
+            ? "#ff6a7e"
+            : MENU_ART.textColor
+          : C.dim,
+      );
+      this.setScale(this.enabled && this.hovered ? 1.04 : 1);
     } else {
       this.bg.setFillStyle(
-        state === "disabled"
+        !this.enabled
           ? C.btnOff
-          : state === "hover"
+          : this.hovered
             ? C.btnHover
             : C.btn,
       );
@@ -977,7 +967,7 @@ export function conditionChips(
     out.push({
       icon,
       cross: true,
-      hint: `${text} — в бою с врагами этого заказа (как отключённые соседством).`,
+      hint: `${text}.`,
     });
   }
   if (c.firstHitBonus) {
@@ -1015,14 +1005,14 @@ export function conditionChips(
       icon: coinIconKey(scene),
       value: fmtMult(reward),
       color: reward >= 1 ? C.good : C.bad,
-      hint: `Награда ${fmtMult(reward)} (уже в числе награды).`,
+      hint: `Награда ${fmtMult(reward)}.`,
     });
   if (penalty && !c.advance)
     out.push({
       icon: coinIconKey(scene),
       value: fmtMult(penalty),
       color: C.bad,
-      hint: `Неустойка ${fmtMult(penalty)} (уже в числе неустойки).`,
+      hint: `Неустойка ${fmtMult(penalty)}.`,
     });
   return out;
 }

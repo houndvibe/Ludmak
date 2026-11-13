@@ -179,6 +179,8 @@ export const uiShopCardKey = (s: ShopCardStyle) => `ui_shop_card_${s}`;
 export type UiIconId = "heart_full" | "heart_broken" | "coin";
 export const uiIconKey = (id: UiIconId) => `ui_icon_${id}`;
 export const UI_PARCHMENT_KEY = "ui_parchment";
+/** Широкая подложка итогов, собранная Boot из текстуры карточки пергамента. */
+export const RESULTS_PARCHMENT_KEY = "results_parchment";
 /** Исходные картинки оформления (как загружены) и готовые для игры (обрезанные и уменьшенные в Boot). */
 export const uiSourceKey = (name: string) => `ui_src_${name}`;
 export const uiButtonKey = (s: ButtonState) => `ui_button_${s}`;
@@ -446,7 +448,29 @@ export const HORSE_ART = {
  * Итоги ночи: ширина панели; левая колонка — строки итогов (x и ширина переноса); правая — поверженные враги и журнал боя
  * (x, ширина, нижний край журнала, шрифт строк журнала).
  */
-export const RESULTS_LAYOUT = { panelW: 1720, leftX: 140, leftW: 860, rightX: 1060, rightW: 720, logBottom: 900, logSize: 18 };
+export const RESULTS_LAYOUT = {
+  panelW: 1720,
+  panelH: 820,
+  panelY: 520,
+  titleY: 155,
+  outcomeY: 218,
+  leftX: 142,
+  leftW: 820,
+  rightX: 1015,
+  rightW: 760,
+  metricY: 264,
+  metricH: 120,
+  orderTitleY: 404,
+  orderY: 439,
+  orderH: 108,
+  orderGap: 8,
+  journalToggleY: 370,
+  logY: 424,
+  logBottom: 900,
+  logSize: 20,
+  logPadX: 18,
+  logPadY: 14,
+};
 
 /** Раскладка экрана рюкзака (редактирование). */
 export const BACKPACK_LAYOUT = {

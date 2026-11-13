@@ -25,6 +25,8 @@ import {
   BG_HOME_CLOSED_PATH,
   UI_HEADER_KEY,
   UI_PARCHMENT_KEY,
+  RESULTS_LAYOUT,
+  RESULTS_PARCHMENT_KEY,
   uiShopCardKey,
   uiButtonKey,
   uiIconKey,
@@ -104,6 +106,7 @@ export class BootScene extends Phaser.Scene {
       cut(uiSourceKey(id), ic.crop, uiIconKey(id), Math.round((ic.crop.w * IH) / ic.crop.h), IH);
     }
     cut(uiSourceKey('parchment'), UI_ART.parchment.crop, UI_PARCHMENT_KEY, HOME_LAYOUT.card.w, HOME_LAYOUT.card.h);
+    this.prepareResultsParchment();
     // Карточки магазина — картинка целиком, до размера карточки.
     for (const s of ['plain', 'rare'] as const) {
       const src = uiSourceKey(`shop_card_${s}`);
@@ -132,6 +135,38 @@ export class BootScene extends Phaser.Scene {
       tex.getContext().drawImage(img, 0, band.y, img.width, band.h, 0, 0, img.width, band.h);
       tex.refresh();
     }
+  }
+
+  /** Собирает широкую подложку из центральной текстуры и краёв карточки заказа, сохраняя фактуру и рваный контур. */
+  private prepareResultsParchment(): void {
+    if (!this.textures.exists(UI_PARCHMENT_KEY)) return;
+    const source = this.textures.get(UI_PARCHMENT_KEY).getSourceImage() as HTMLImageElement;
+    const w = RESULTS_LAYOUT.panelW;
+    const h = 820;
+    const edgeX = 58;
+    const edgeY = 48;
+    const tex = this.textures.createCanvas(RESULTS_PARCHMENT_KEY, w, h)!;
+    const ctx = tex.getContext();
+    ctx.imageSmoothingQuality = 'high';
+
+    // Ровная середина берётся из чистого участка пергамента, без кнопки-гвоздя вверху.
+    ctx.drawImage(source, 58, 92, source.width - 116, source.height - 184, edgeX, edgeY, w - edgeX * 2, h - edgeY * 2);
+
+    // Боковые и нижний края остаются от исходной карточки и не растягиваются по ширине.
+    ctx.drawImage(source, 0, 52, 58, source.height - 104, 0, edgeY, edgeX, h - edgeY * 2);
+    ctx.drawImage(source, source.width - 58, 52, 58, source.height - 104, w - edgeX, edgeY, edgeX, h - edgeY * 2);
+    ctx.drawImage(source, 58, source.height - 48, source.width - 116, 48, edgeX, h - edgeY, w - edgeX * 2, edgeY);
+
+    // Верхний край берётся с двух сторон от гвоздя; центральный стык закрывает чистая кромка бумаги.
+    const half = w / 2;
+    ctx.drawImage(source, 0, 0, 58, 52, 0, 0, edgeX, edgeY);
+    ctx.drawImage(source, source.width - 58, 0, 58, 52, w - edgeX, 0, edgeX, edgeY);
+    ctx.drawImage(source, 0, source.height - 48, 58, 48, 0, h - edgeY, edgeX, edgeY);
+    ctx.drawImage(source, source.width - 58, source.height - 48, 58, 48, w - edgeX, h - edgeY, edgeX, edgeY);
+    ctx.drawImage(source, 58, 8, 120, 40, edgeX, 0, half - edgeX, edgeY);
+    ctx.drawImage(source, source.width - 178, 8, 120, 40, half, 0, half - edgeX, edgeY);
+
+    tex.refresh();
   }
 
   /**
