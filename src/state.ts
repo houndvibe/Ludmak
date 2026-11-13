@@ -13,6 +13,7 @@ import {
   START_LIVES,
 } from './config/balance';
 import { CLIENTS } from './data/clients';
+import type { EnemyId } from './data/enemies';
 import { ITEM_IDS, ITEMS, type ItemId } from './data/items';
 import type { ChainLink } from './systems/battle';
 import { findSpot, type OwnedItem } from './systems/backpack';
@@ -104,6 +105,10 @@ export interface RunState {
   mainUid: number | null;
   /** Заряды топора к концу дня — переходят в бой с финальным боссом (новый день начинается с нуля). */
   axeCharges: number;
+  /** Быстрый бой из меню: один бой со стартовым снаряжением, после него — обратно в меню (без итогов и жизней). */
+  quickFight: boolean;
+  /** Журнал последнего боя дня (строки и цвета) — показывается в итогах ночи. */
+  battleLog: { text: string; color: string }[];
 }
 
 export let run: RunState = emptyRun();
@@ -130,7 +135,21 @@ function emptyRun(): RunState {
     finished: false,
     mainUid: null,
     axeCharges: 0,
+    quickFight: false,
+    battleLog: [],
   };
+}
+
+/**
+ * Быстрый бой из меню: новый забег на ночь night со стартовым снаряжением (debug — монеты дебага), один заказ Водяного
+ * (условие не влияет на бой) из одного врага. Ведьмак — бой с финальным боссом с полным здоровьем.
+ */
+export function newQuickFight(enemy: EnemyId, night: number, debug: boolean): void {
+  newRun(false, debug);
+  run.quickFight = true;
+  run.night = night;
+  run.letterRead = true;
+  run.accepted = enemy === FINAL_BOSS ? [] : [fixedContract(night, 'vodyanoy', [enemy])];
 }
 
 /**
@@ -162,6 +181,7 @@ function startNight(): void {
   for (const c of run.queue) (run.usedQuests[c.client] ??= []).push(c.quest);
   run.queuePos = 0;
   run.accepted = [];
+  run.battleLog = [];
   run.rerolls = 0;
   run.summary = null;
 }
@@ -226,6 +246,27 @@ export function markTutorialDone(): void {
     window.localStorage.setItem(TUTORIAL_KEY, '1');
   } catch {
     // нет хранилища — в следующий раз обучение покажется снова
+  }
+}
+
+// ─── Медленные кружки (галочка в меню, localStorage) ─────────────────────────
+// Для проверки рисунков атак: кружки на поле парирования живут в FEEL.parry.slowMult раз дольше.
+
+const SLOW_KEY = 'ludmak.slowCircles';
+
+export function isSlowCircles(): boolean {
+  try {
+    return window.localStorage.getItem(SLOW_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function setSlowCircles(v: boolean): void {
+  try {
+    window.localStorage.setItem(SLOW_KEY, v ? '1' : '0');
+  } catch {
+    // нет хранилища — галочка не запомнится
   }
 }
 
@@ -323,9 +364,9 @@ function mergedCharges(id: ItemId, a: number | undefined, b: number | undefined,
   return Math.min(to, Math.ceil((((a ?? 0) + (b ?? 0)) * (to / from)) / 2));
 }
 
-/** Может ли предмет быть основным оружием (оружие с перком парирования или щит). */
+/** Может ли предмет быть основным оружием: оружие с перком парирования или щит, и лежит в сумках (не вне сумок). */
 export function canBeMain(item: OwnedItem): boolean {
-  return !!ITEMS[item.id].parryPerk;
+  return !!ITEMS[item.id].parryPerk && item.inGrid;
 }
 
 /** Сделать предмет основным (null — снять выбор). */

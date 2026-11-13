@@ -102,7 +102,9 @@ let playerVolume = 1;
  */
 export function restoreMute(game: Phaser.Game): void {
   try {
-    game.sound.mute = window.localStorage.getItem(MUTE_KEY) === '1';
+    // Кнопки «Без звука» в шапке больше нет — заглушённый в прошлой сессии звук не восстанавливаем (иначе не включить).
+    game.sound.mute = false;
+    window.localStorage.removeItem(MUTE_KEY);
     const v = window.localStorage.getItem(VOLUME_KEY);
     if (v !== null && Number.isFinite(Number(v))) playerVolume = Phaser.Math.Clamp(Number(v), 0, 1);
   } catch {

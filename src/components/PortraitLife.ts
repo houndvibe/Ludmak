@@ -5,10 +5,10 @@ import * as Phaser from 'phaser';
 import { PORTRAIT_LIFE } from '../config/assets';
 import { FEEL } from '../config/feel';
 
-const GLOW_KEY = 'fx_portrait_glow';
+export const GLOW_KEY = 'fx_portrait_glow';
 
-/** Мягкое круглое пятно света (рисуется один раз), красится tint'ом. */
-function ensureGlowTexture(scene: Phaser.Scene): void {
+/** Мягкое круглое пятно света (рисуется один раз), красится tint'ом. Им же светятся частицы курсора в бою. */
+export function ensureGlowTexture(scene: Phaser.Scene): void {
   if (scene.textures.exists(GLOW_KEY)) return;
   const s = 64;
   const tex = scene.textures.createCanvas(GLOW_KEY, s, s)!;
@@ -34,7 +34,7 @@ export function addPortrait(
   y: number,
   key: string,
   width: number,
-  mask: Phaser.Display.Masks.GeometryMask | null,
+  mask: Phaser.Display.Masks.GeometryMask | Phaser.Display.Masks.BitmapMask | null,
 ): Portrait {
   const life = PORTRAIT_LIFE[key];
   const webgl = scene.game.renderer.type === Phaser.WEBGL;

@@ -33,11 +33,12 @@ class Overlay {
     this.cont = scene.add.container(0, 0).setDepth(2000).setAlpha(0);
 
     // Тёмные прямоугольники вокруг окон: они ловят клики и наведение, поэтому всё вне окон заблокировано.
-    for (const r of darkRects(holes)) {
+    // Свободный шаг (free) — без затемнения: экран работает, подсвечен только элемент.
+    for (const r of step.free ? [] : darkRects(holes)) {
       this.cont.add(scene.add.rectangle(r.x, r.y, r.w, r.h, 0x000000, F.dimAlpha).setOrigin(0).setInteractive());
     }
-    // Пояснение: окно тоже не нажимается — только «Понятно».
-    if (!step.action) this.cont.add(scene.add.rectangle(hole.x, hole.y, hole.w, hole.h, 0xffffff, 0.001).setOrigin(0).setInteractive());
+    // Пояснение: окно тоже не нажимается — только «Понятно». С hover — окно открыто: внутри работают подсказки при наведении.
+    if (!step.action && !step.hover) this.cont.add(scene.add.rectangle(hole.x, hole.y, hole.w, hole.h, 0xffffff, 0.001).setOrigin(0).setInteractive());
     for (const h of holes) this.cont.add(scene.add.rectangle(h.x, h.y, h.w, h.h).setOrigin(0).setStrokeStyle(F.frameWidth, F.frameColor));
 
     // Попап с текстом (у пояснений — кнопка «Понятно»). Нет места на обычной ширине — попап уже (текст в больше строк).
@@ -60,6 +61,12 @@ class Overlay {
       ph = F.popupPad * 2 + text.height + (btnH ? btnH + F.popupPad : 0);
       const p = { x: (W - pw) / 2, y: (H - ph) / 2 };
       place = { ...p, side: null, tail: p, tip: p };
+    }
+    // Сдвиг попапа из шага (popupDY, popupDX): попап и начало стрелки вместе, не за краем экрана.
+    if (step.popupDY || step.popupDX) {
+      const dy = Phaser.Math.Clamp(place.y + (step.popupDY ?? 0), 10, H - ph - 10) - place.y;
+      const dx = Phaser.Math.Clamp(place.x + (step.popupDX ?? 0), 10, W - pw - 10) - place.x;
+      place = { ...place, x: place.x + dx, y: place.y + dy, tail: { x: place.tail.x + dx, y: place.tail.y + dy } };
     }
     const popup = scene.add.container(place.x, place.y);
     popup.add(scene.add.rectangle(0, 0, pw, ph, 0x15121b, 0.97).setOrigin(0).setStrokeStyle(3, F.frameColor));

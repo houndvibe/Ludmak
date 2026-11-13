@@ -52,10 +52,14 @@ export function levelForNight(night: number): number {
 }
 
 /** Обычные враги одного заказа этой ночи. */
-export function rollEnemies(night: number, rng: Rng, count?: number): EnemyId[] {
+export function rollEnemies(night: number, rng: Rng, count?: number, client?: ClientId): EnemyId[] {
   const [min, max] = ENEMY_COUNT_BY_NIGHT[night - 1];
   const n = count ?? randInt(rng, min, max);
-  return Array.from({ length: n }, () => pick(rng, ENEMY_POOL_BY_NIGHT[night - 1]));
+  // Враги, которых заказчик не берёт (Безголовый — без разбойников); если отфильтровали всех — обычный пул.
+  const banned = client ? CLIENTS[client].condition.noEnemies ?? [] : [];
+  const all = ENEMY_POOL_BY_NIGHT[night - 1];
+  const pool = all.filter((e) => !banned.includes(e));
+  return Array.from({ length: n }, () => pick(rng, pool.length ? pool : all));
 }
 
 /**
@@ -86,5 +90,5 @@ export function generateQueue(night: number, rng: Rng = Math.random, used: UsedQ
   const size = Math.min(levelForNight(night) + QUEUE_EXTRA, CLIENT_IDS.length);
   return shuffle(rng, CLIENT_IDS)
     .slice(0, size)
-    .map((client) => makeContract(night, client, rollEnemies(night, rng), pickQuest(client, used, rng), rng));
+    .map((client) => makeContract(night, client, rollEnemies(night, rng, undefined, client), pickQuest(client, used, rng), rng));
 }

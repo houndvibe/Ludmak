@@ -15,6 +15,7 @@
 // и здоровье героя на привалах.
 import {
   BALANCE_PARRY_RATE,
+  PARRY_RATE_BY_KIND,
   FINAL_BOSS,
   PARRY_REWARD_MULT,
   SHIELD_PARRY_BONUS,
@@ -170,7 +171,8 @@ function playDay(
   // Основное оружие бота: щит, если есть (щит-курсор), иначе стальной меч, иначе любое оружие с перком.
   const pickMain = (id: ItemId) => items.find((i) => i.inGrid && i.id === id)?.uid;
   const mainUid = pickMain('wooden_shield') ?? pickMain('steel_sword') ?? items.find((i) => i.inGrid && ITEMS[i.id].parryPerk)?.uid ?? null;
-  const sim = new BattleSim({ items, chain: plan.chain, clients: plan.clients, night, rng, heroHp, mainUid });
+  // Монеты: с запасом — всё, что унёс мешок разбойника, вычитается из дохода дня.
+  const sim = new BattleSim({ items, chain: plan.chain, clients: plan.clients, night, rng, heroHp, mainUid, coins: 999 });
   const parryRate = rules?.parryRate ?? BALANCE_PARRY_RATE; // баланс — на «среднего игрока»
   const shieldBonus = rules?.shieldBonus ?? SHIELD_PARRY_BONUS;
   let t = 0;
@@ -221,12 +223,14 @@ function playDay(
     }
     sim.step(DT);
     for (const e of sim.drain()) {
-      // Парирование: бот жмёт картинку сразу при замахе с вероятностью parryRate (своя случайность — бой не трогает).
-      // Щит-курсор в рюкзаке — парирует чаще на shieldBonus.
+      // Парирование: бот жмёт кружок сразу, как он появился, с вероятностью своего рисунка (PARRY_RATE_BY_KIND при
+      // BALANCE_PARRY_RATE, при другой доле — пропорционально; своя случайность — бой не трогает). Пара «кистень + мешок»:
+      // кистень появляется первым — бот сначала пробует его, мешок — только если кистень не отбил.
       if (e.type === 'windup' && parryRate > 0 && parryRng) {
         // Без основного оружия парировать нельзя; щит основным — парирует чаще на shieldBonus.
         const main = sim.mainSlot;
-        const rate = !main ? 0 : main.def.parryPerk === 'shield' ? Math.min(1, parryRate + shieldBonus) : parryRate;
+        const base = Math.min(1, (PARRY_RATE_BY_KIND[e.kind] * parryRate) / BALANCE_PARRY_RATE);
+        const rate = !main ? 0 : main.def.parryPerk === 'shield' ? Math.min(1, base + shieldBonus) : base;
         if (parryRng() < rate) sim.parry(e.id);
       }
       if (!track) continue;
@@ -262,6 +266,7 @@ function playDay(
     });
   }
 
+  income -= sim.walletLost; // мешок разбойника: унесено из кошелька
   // Потраченные заряды: всё, чего не осталось в рюкзаке к концу дня (включая взорвавшиеся предметы).
   let replacement = 0;
   for (const it of items) {

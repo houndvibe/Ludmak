@@ -7,6 +7,7 @@ import {
   BLOCK_MAX,
   ENEMY_BLOCK_MAX,
   ENEMY_ITEM_STATS,
+  ENEMY_PATTERN,
   ENEMY_STAT_MULT_BY_NIGHT,
   ENEMY_STATS,
   GHOST_FIRST_HIT_MULT,
@@ -15,6 +16,7 @@ import {
   PARRY_DAMAGE_MULT,
   PARRY_PERK,
   PARRY_REWARD_SHARE,
+  type PARRY_RATE_BY_KIND,
   type EnemyItemStats,
   type ItemStats,
 } from '../config/balance';
@@ -91,6 +93,22 @@ export interface EnemyState {
   dodgeBomb: boolean;
   /** Факел героя: на столько секунд дольше перезаряжаются все его предметы (копится до конца боя с ним). */
   torchSlow: number;
+  /** Ростовой щит сбит: ещё столько секунд урон героя проходит полностью. */
+  guardBroken: number;
+  /** Монах: крест закончился — можно бросить святую воду; blessed — ритуал прошёл, вода освящена. */
+  ritualReady: boolean;
+  blessed: boolean;
+  /** Разбойник: кружок бегства уже был; escaped — сбежал (бой с ним закончен, украденное не вернуть). */
+  escapeTried: boolean;
+  escaped: boolean;
+  /** Сколько этот враг украл из кошелька и из награды (вернётся, если его убить). */
+  stolenWallet: number;
+  stolenReward: number;
+  /** Знак Квен: купол поднят; таймер до следующего купола; сколько атак отбито подряд; сколько раз уже был. */
+  quenOn: boolean;
+  quenTimer: number;
+  quenStreak: number;
+  quenCount: number;
   slots: EnemySlot[];
   /** Слоты в порядке использования: priority, при равенстве — порядок в раскладке. */
   order: EnemySlot[];
@@ -102,8 +120,8 @@ export type BattleEvent =
   | { type: 'heroCharge'; uid: number; left: number }
   | { type: 'enemyItem'; uid: number; name: string }
   | { type: 'enemyCharge'; uid: number; left: number }
-  /** halved — урон срезан модификатором врага (кольчуга, набожный). */
-  | { type: 'enemyHit'; taken: number; absorbed: number; buffed: boolean; firstStrike: boolean; halved: boolean; item: ItemId }
+  /** halved — урон срезан модификатором врага (кольчуга, набожный); guarded — ростовым щитом; quen — поглощён Квеном. */
+  | { type: 'enemyHit'; taken: number; absorbed: number; buffed: boolean; firstStrike: boolean; halved: boolean; guarded: boolean; quen: boolean; item: ItemId | null }
   | { type: 'heroHit'; taken: number; absorbed: number; self: boolean }
   | { type: 'heroHeal'; amount: number }
   | { type: 'enemyHeal'; amount: number }
@@ -111,7 +129,9 @@ export type BattleEvent =
   | { type: 'enemyBlock'; amount: number }
   | { type: 'stun'; seconds: number }
   | { type: 'buff'; mult: number }
-  | { type: 'onHit'; uid: number; steal: number }
+  /** Мешок: украдено из кошелька (wallet) и из награды (reward); refund — убил вора, украденное вернулось. */
+  | { type: 'steal'; uid: number; wallet: number; reward: number }
+  | { type: 'refund'; wallet: number; reward: number }
   /** Перки основного оружия: факел замедлил врага (итог, сек), топор набрал заряд, топор ударил двойным. */
   | { type: 'torchSlow'; seconds: number }
   | { type: 'axeCharge'; charges: number }
@@ -128,9 +148,23 @@ export type BattleEvent =
   | { type: 'woke'; seconds: number }
   // Босс
   | { type: 'dodge'; name: string; item: string }
-  // Парирование: замах атаки врага (появилась картинка) и удар (окно закрылось или игрок парировал)
-  | { type: 'windup'; id: number; uid: number; item: EnemyItemId }
+  // Рисунки врагов: щит стражника сбит / поднят, ритуал монаха, бегство разбойника, Квен, бомба назад, оглушение героя
+  | { type: 'guardBroken'; seconds: number }
+  | { type: 'guardUp' }
+  | { type: 'ritual'; broken: boolean }
+  | { type: 'escaped'; name: string }
+  | { type: 'quen'; on: boolean }
+  | { type: 'reflect'; damage: number }
+  | { type: 'heroStun'; seconds: number }
+  // Парирование: прицел (до выстрела), замах атаки врага (появилась картинка) и удар (окно закрылось или игрок парировал)
+  | { type: 'aim'; id: number; item: EnemyItemId; seconds: number }
+  /** Двойной удар копья: отрезок серии group проявляется за seconds до первого удара. */
+  | { type: 'telegraph'; group: number; seconds: number }
+  | { type: 'windup'; id: number; uid: number; item: EnemyItemId; kind: AttackKind; group: number | null; index: number; from: number | null; partner: number | null }
   | { type: 'strike'; id: number; parried: boolean };
+
+/** Вид кружка на поле (рисунок атаки и особые кружки: мешок, щит стражника, бегство). */
+export type AttackKind = keyof typeof PARRY_RATE_BY_KIND;
 
 /** Атака врага «в полёте»: картинка висит, удар придёт, когда left (сек реального времени) дойдёт до нуля. */
 export interface PendingAttack {
@@ -138,6 +172,27 @@ export interface PendingAttack {
   slot: EnemySlot;
   left: number;
   total: number;
+  kind: AttackKind;
+  /** Ещё столько секунд до появления (следующий удар серии, прицел, мешок после кистеня). */
+  delay: number;
+  shown: boolean;
+  /** Серия (крест, очередь): номер серии и место удара в ней. */
+  group: number | null;
+  index: number;
+  /** Пара «кистень + мешок»: другой кружок пары; отбил один — второй нельзя отбить (locked). */
+  partner: number | null;
+  locked: boolean;
+  /** Кружок щита стражника — в конце какого выпада. */
+  from: number | null;
+  /** Множитель урона (освящённая святая вода). */
+  mult: number;
+}
+
+/** Серия ударов в полёте: сколько ударов, сколько уже пришло и сколько отбито. */
+interface AttackGroup {
+  total: number;
+  done: number;
+  parried: number;
 }
 
 /**
@@ -161,6 +216,8 @@ export interface BattleConfig {
   mainUid?: number | null;
   /** Заряды топора с прошлых боёв этого дня (финальный бой — после дня). */
   axeCharges?: number;
+  /** Монеты героя в начале боя: мешок разбойника крадёт из них. */
+  coins?: number;
 }
 
 /**
@@ -228,6 +285,13 @@ export class BattleSim {
   /** Атаки текущего врага в полёте (окно парирования). Смерть врага их отменяет. */
   pending: PendingAttack[] = [];
   private nextPendingId = 1;
+  private groups = new Map<number, AttackGroup>();
+  private nextGroupId = 1;
+  /** Монеты героя: в начале боя и сейчас (мешок разбойника крадёт, смерть вора возвращает). */
+  private coinsStart: number;
+  wallet: number;
+  /** Герой оглушён (пропущенная бомба ведьмака): ещё столько секунд активные предметы не нажимаются. */
+  heroStun = 0;
   private events: BattleEvent[] = [];
 
   constructor(cfg: BattleConfig) {
@@ -238,6 +302,8 @@ export class BattleSim {
     this.heroHp = Math.min(this.heroMaxHp, Math.max(1, cfg.heroHp ?? this.heroMaxHp));
     this.mainUid = cfg.mainUid ?? null;
     this.axeCharges = cfg.axeCharges ?? 0;
+    this.coinsStart = cfg.coins ?? 0;
+    this.wallet = this.coinsStart;
     this.rng = cfg.rng ?? Math.random;
     this.stolen = Array.from({ length: cfg.clients.length }, () => 0);
     this.attacks = Array.from({ length: cfg.clients.length }, () => 0);
@@ -254,6 +320,11 @@ export class BattleSim {
     }));
     this.spawn(true); // первый враг и соседство с учётом условия его заказа
     this.explodeAtStart();
+  }
+
+  /** Сколько монет кошелька за бой унёс мешок (без возвращённого). */
+  get walletLost(): number {
+    return this.coinsStart - this.wallet;
   }
 
   /** Отбито ли не меньше PARRY_REWARD_SHARE атак врагов заказа k (атак не было — да). */
@@ -439,13 +510,41 @@ export class BattleSim {
         stats: { ...stats },
         charges: stats.charges ?? Infinity,
         timer: 0,
-        own: !!def.parallelWeapons && itemDef.mode === 'action' && itemDef.category === 'weapon',
+        // Своя перезарядка: оружие ведьмака (parallelWeapons) и пистоль (прицел) — стреляет параллельно со шпагой.
+        own: (!!def.parallelWeapons && itemDef.mode === 'action' && itemDef.category === 'weapon') || itemDef.pattern === 'aim',
         boost: 0,
       };
     });
     applyEnemyAuras(slots);
     const order = [...slots].sort((a, b) => a.def.priority - b.def.priority || a.uid - b.uid);
-    this.enemy = { id, mod, power, hp, maxHp: hp, block: 0, actionTimer: 0, stun: 0, hitOnce: false, haste: 0, dodgeBomb: !!def.dodgeFirstBomb, torchSlow: 0, slots, order };
+    this.enemy = {
+      id,
+      mod,
+      power,
+      hp,
+      maxHp: hp,
+      block: 0,
+      actionTimer: 0,
+      stun: 0,
+      hitOnce: false,
+      haste: 0,
+      dodgeBomb: !!def.dodgeFirstBomb,
+      torchSlow: 0,
+      guardBroken: 0,
+      ritualReady: false,
+      blessed: false,
+      escapeTried: false,
+      escaped: false,
+      stolenWallet: 0,
+      stolenReward: 0,
+      quenOn: false,
+      quenTimer: 0,
+      quenStreak: 0,
+      quenCount: 0,
+      slots,
+      order,
+    };
+    this.groups.clear();
     for (const p of this.passives) p.timer = 0;
     this.recompute(initial);
   }
@@ -460,8 +559,14 @@ export class BattleSim {
   step(dt: number, realDt = dt): void {
     if (this.status !== 'fight') return;
 
-    // Атаки в полёте: окно закрылось — удар.
+    // Атаки в полёте: ещё не появилась — ждёт своей очереди; окно закрылось — удар.
     for (const p of [...this.pending]) {
+      if (!p.shown) {
+        p.delay -= realDt;
+        if (p.delay > 0) continue;
+        this.show(p);
+        continue;
+      }
       p.left -= realDt;
       if (p.left > 0) continue;
       this.strike(p, false);
@@ -492,7 +597,22 @@ export class BattleSim {
       }
     }
 
+    if (this.heroStun > 0) this.heroStun = Math.max(0, this.heroStun - dt);
     const e = this.enemy;
+    if (e.guardBroken > 0) {
+      e.guardBroken = Math.max(0, e.guardBroken - dt);
+      if (e.guardBroken === 0) this.events.push({ type: 'guardUp' });
+    }
+    // Знак Квен: через first (потом every) секунд — купол.
+    if (ENEMIES[e.id].quen && !e.quenOn) {
+      e.quenTimer += dt;
+      if (e.quenTimer >= (e.quenCount ? ENEMY_PATTERN.quen.every : ENEMY_PATTERN.quen.first)) {
+        e.quenOn = true;
+        e.quenStreak = 0;
+        e.quenCount++;
+        this.events.push({ type: 'quen', on: true });
+      }
+    }
     if (e.haste > 0) e.haste = Math.max(0, e.haste - dt); // чуткий сон: время идёт и под оглушением
     if (e.stun > 0) {
       e.stun = Math.max(0, e.stun - dt); // оглушённый враг не готовит действия и не тикает щитом
@@ -500,14 +620,17 @@ export class BattleSim {
     }
     for (const s of e.slots) {
       // Щит — сам по перезарядке; оружие врага с parallelWeapons — тоже, каждое своё.
-      if ((s.def.mode !== 'passive' && !s.own) || s.charges <= 0) continue;
+      if ((s.def.mode !== 'passive' && !s.own) || s.charges <= 0 || !s.stats.cooldown) continue;
+      if (s.own && this.pending.some((p) => p.slot === s)) continue; // своё оружие ждёт, пока его удары в полёте
       s.timer += dt;
       if (s.timer >= s.stats.cooldown! + e.torchSlow) {
         s.timer -= s.stats.cooldown! + e.torchSlow;
         this.useEnemyItem(s);
       }
     }
-    const next = this.nextAction();
+    // Пока серия (крест, очередь) в полёте, следующее действие не готовится.
+    const busy = this.pending.some((p) => p.group !== null && !p.slot.own);
+    const next = busy ? null : this.nextAction();
     if (next) {
       e.actionTimer += dt * (e.haste > 0 ? MODIFIER_STATS.lightSleeperSpeed : 1);
       if (e.actionTimer >= next.stats.cooldown! + e.torchSlow) {
@@ -520,11 +643,18 @@ export class BattleSim {
 
   // ─── Герой ───────────────────────────────────────────────────────────────
 
-  /** Игрок нажал картинку атаки: удар приходит сразу, ослабленный (PARRY_DAMAGE_MULT), и не крадёт монеты. */
+  /**
+   * Игрок нажал картинку атаки: удар приходит сразу, ослабленный (PARRY_DAMAGE_MULT); мешок не крадёт, щит стражника
+   * сбит, бегство сорвано, бомба летит обратно. Пара «кистень + мешок»: второй кружок пары отбить уже нельзя.
+   */
   parry(id: number): boolean {
     const p = this.pending.find((a) => a.id === id);
     const main = this.mainSlot;
-    if (!p || !main || this.status !== 'fight') return false;
+    if (!p || !p.shown || p.locked || !main || this.status !== 'fight') return false;
+    if (p.partner !== null) {
+      const q = this.pending.find((a) => a.id === p.partner);
+      if (q) q.locked = true;
+    }
     const perk = main.def.parryPerk!;
     this.strike(p, true, perk === 'shield' ? PARRY_PERK.shieldMult : PARRY_DAMAGE_MULT);
     if (this.status === 'fight') this.parryPerk(main);
@@ -536,11 +666,11 @@ export class BattleSim {
   private parryPerk(main: HeroSlot): void {
     const perk = main.def.parryPerk;
     if (perk === 'dagger' && main.stats.damage) {
-      // Кинжал отвечает своим уроном (итог с соседями, бафф масла, сопротивление врага).
+      // Кинжал отвечает долей своего урона (итог с соседями, бафф масла, сопротивление врага).
       const mult = this.weaponBuff.mult;
       const resist = this.resistMult(main.def);
       this.events.push({ type: 'heroItem', uid: main.item.uid, name: main.def.name, active: false });
-      this.damageEnemy(Math.round(main.stats.damage * mult * resist), mult > 1, resist < 1, main.def.id);
+      this.damageEnemy(Math.round(main.stats.damage * PARRY_PERK.daggerMult * mult * resist), mult > 1, resist < 1, main.def.id);
     } else if (perk === 'torch') {
       const e = this.enemy;
       e.torchSlow = Math.min(PARRY_PERK.torchSlowMax, Math.round((e.torchSlow + PARRY_PERK.torchSlow) * 10) / 10);
@@ -558,7 +688,7 @@ export class BattleSim {
   /** Применить активный предмет героя. false — нельзя (не бой, отключён, нет зарядов, не активный). */
   useActive(uid: number): boolean {
     const slot = this.actives.find((a) => a.item.uid === uid);
-    if (!slot || this.status !== 'fight' || slot.disabled || slot.charges <= 0) return false;
+    if (!slot || this.status !== 'fight' || slot.disabled || slot.charges <= 0 || this.heroStun > 0) return false;
     this.events.push({ type: 'heroItem', uid, name: slot.def.name, active: true });
     this.applyHero(slot);
     // Чуткий сон: шумный предмет будит врага — он какое-то время готовит удары быстрее.
@@ -636,16 +766,33 @@ export class BattleSim {
     return m;
   }
 
-  private damageEnemy(dmg: number, buffed: boolean, halved: boolean, item: ItemId): void {
+  private damageEnemy(dmg: number, buffed: boolean, halved: boolean, item: ItemId | null): void {
+    const e = this.enemy;
     // Призрак: первый удар героя по каждому врагу его заказа — усиленный.
-    const firstStrike = !this.enemy.hitOnce && !!this.condition.firstHitBonus;
-    this.enemy.hitOnce = true;
+    const firstStrike = !e.hitOnce && !!this.condition.firstHitBonus;
+    e.hitOnce = true;
     if (firstStrike) dmg = Math.round(dmg * GHOST_FIRST_HIT_MULT);
-    const absorbed = Math.min(this.enemy.block, dmg);
-    this.enemy.block -= absorbed;
+    // Квен поглощает всё; ростовой щит, пока не сбит, режет урон.
+    const quen = e.quenOn;
+    let guarded = false;
+    if (quen) dmg = 0;
+    else {
+      const guard = e.slots.find((s) => s.stats.guardMult);
+      if (guard && e.guardBroken <= 0) {
+        dmg = Math.round(dmg * guard.stats.guardMult!);
+        guarded = true;
+      }
+    }
+    const absorbed = Math.min(e.block, dmg);
+    e.block -= absorbed;
     const taken = dmg - absorbed;
-    this.enemy.hp = Math.max(0, this.enemy.hp - taken);
-    this.events.push({ type: 'enemyHit', taken, absorbed, buffed, firstStrike, halved, item });
+    e.hp = Math.max(0, e.hp - taken);
+    this.events.push({ type: 'enemyHit', taken, absorbed, buffed, firstStrike, halved, guarded, quen, item });
+    // Разбойник: здоровье упало ниже порога — кружок бегства (один раз за бой).
+    if (ENEMIES[e.id].escape && !e.escapeTried && e.hp > 0 && e.hp < e.maxHp * ENEMY_PATTERN.escapeBelow) {
+      e.escapeTried = true;
+      this.addPending(e.slots[0], 'escape', FEEL.parry.window * FEEL.patterns.escapeWindow, 0);
+    }
   }
 
   // ─── Враг ────────────────────────────────────────────────────────────────
@@ -655,7 +802,12 @@ export class BattleSim {
     const e = this.enemy;
     return (
       e.order.find(
-        (s) => s.def.mode === 'action' && !s.own && s.charges > 0 && (!s.stats.healBelow || e.hp / e.maxHp < s.stats.healBelow),
+        (s) =>
+          s.def.mode === 'action' &&
+          !s.own &&
+          s.charges > 0 &&
+          (!s.stats.healBelow || e.hp / e.maxHp < s.stats.healBelow) &&
+          (!s.def.afterRitual || e.ritualReady),
       ) ?? null
     );
   }
@@ -668,12 +820,42 @@ export class BattleSim {
       slot.charges--;
       this.events.push({ type: 'enemyCharge', uid: slot.uid, left: slot.charges });
     }
+    // Святая вода — после креста; ритуал прошёл — освящённая.
+    let mult = 1;
+    if (slot.def.afterRitual) {
+      if (e.blessed) mult = ENEMY_PATTERN.blessMult;
+      e.blessed = false;
+      e.ritualReady = false;
+    }
     if (s.damage) {
-      // Атака не бьёт сразу: замах, окно парирования (реальное время), потом удар (strike).
-      const window = FEEL.parry.window;
-      const p: PendingAttack = { id: this.nextPendingId++, slot, left: window, total: window };
-      this.pending.push(p);
-      this.events.push({ type: 'windup', id: p.id, uid: slot.uid, item: slot.def.id });
+      // Атака не бьёт сразу: замах, окно парирования (реальное время), потом удар (strike). Рисунок — по предмету.
+      const W = FEEL.parry.window;
+      const P = FEEL.patterns;
+      const pat = slot.def.pattern;
+      if ((pat === 'cross' || pat === 'burst' || pat === 'double') && (s.series ?? 1) > 1) {
+        const group = this.nextGroupId++;
+        this.groups.set(group, { total: s.series!, done: 0, parried: 0 });
+        // Двойной удар копья: сначала проявляется отрезок (lead), удары — после.
+        const lead = pat === 'double' ? s.lead ?? 0 : 0;
+        if (pat === 'double') this.events.push({ type: 'telegraph', group, seconds: lead });
+        for (let i = 0; i < s.series!; i++) this.addPending(slot, pat, W, lead + i * (s.seriesStep ?? 0), group, i);
+      } else if (pat === 'aim') {
+        const p = this.addPending(slot, 'aim', W * P.aimWindow, s.aim ?? 0);
+        this.events.push({ type: 'aim', id: p.id, item: slot.def.id, seconds: s.aim ?? 0 });
+      } else {
+        const kind: AttackKind = pat === 'thrust' ? 'thrust' : pat === 'reflect' ? 'reflect' : 'hit';
+        const p = this.addPending(slot, kind, W * (kind === 'thrust' ? P.thrustWindow : 1), 0);
+        p.mult = mult;
+        // Мешок разбойника: с каждым ударом оружия — кружок мешка в другом месте; отбить можно что-то одно.
+        const sack = e.slots.find((o) => o.def.mode === 'onHit');
+        if (sack && slot.def.category === 'weapon') {
+          const q = this.addPending(sack, 'sack', W, P.sackDelay);
+          p.partner = q.id;
+          q.partner = p.id;
+          // Кистень уже на поле: сцене нужно знать его мешок (отрезок к месту, где мешок появится).
+          for (const ev of this.events) if (ev.type === 'windup' && ev.id === p.id) ev.partner = q.id;
+        }
+      }
     }
     if (s.heal) {
       const amount = Math.min(Math.round(s.heal * e.power), e.maxHp - e.hp);
@@ -687,7 +869,39 @@ export class BattleSim {
     }
   }
 
-  /** Удар атаки в полёте: полный или парированный. Пьяный бросает кубик на промах в момент удара. */
+  /** Новый кружок на поле: появится через delay секунд (серия, прицел), окно — total секунд. */
+  private addPending(slot: EnemySlot, kind: AttackKind, total: number, delay: number, group: number | null = null, index = 0, from: number | null = null): PendingAttack {
+    const p: PendingAttack = {
+      id: this.nextPendingId++,
+      slot,
+      left: total,
+      total,
+      kind,
+      delay,
+      shown: false,
+      group,
+      index,
+      partner: null,
+      locked: false,
+      from,
+      mult: 1,
+    };
+    this.pending.push(p);
+    if (delay <= 0) this.show(p);
+    return p;
+  }
+
+  /** Кружок появился на поле — сцена рисует его, окно пошло. */
+  private show(p: PendingAttack): void {
+    p.shown = true;
+    this.events.push({ type: 'windup', id: p.id, uid: p.slot.uid, item: p.slot.def.id, kind: p.kind, group: p.group, index: p.index, from: p.from, partner: p.partner });
+  }
+
+  /**
+   * Удар кружка: окно закрылось или игрок отбил. Каждый кружок — атака (счёт Безголового, сгорание зарядов топора).
+   * Мешок крадёт, щит стражника сбивается, бегство удаётся, бомба ведьмака летит обратно, остальное — урон герою.
+   * Пьяный бросает кубик на промах в момент удара (только удары с уроном).
+   */
   private strike(p: PendingAttack, parried: boolean, parryMult = PARRY_DAMAGE_MULT): void {
     this.pending = this.pending.filter((a) => a !== p);
     this.events.push({ type: 'strike', id: p.id, parried });
@@ -698,27 +912,106 @@ export class BattleSim {
     }
     const e = this.enemy;
     const s = p.slot.stats;
-    if (e.mod === 'drunk' && this.rng() < MODIFIER_STATS.drunkMiss) {
-      // Пьяный промахнулся: урона нет, мешок не срабатывает (заряд всё равно потрачен).
-      this.events.push({ type: 'enemyMiss', name: p.slot.def.name });
-      return;
+    // Квен спадает после стольких отбитых подряд; пропуск сбрасывает счёт.
+    if (e.quenOn) {
+      e.quenStreak = parried ? e.quenStreak + 1 : 0;
+      if (e.quenStreak >= ENEMY_PATTERN.quen.parries) {
+        e.quenOn = false;
+        e.quenTimer = 0;
+        this.events.push({ type: 'quen', on: false });
+      }
     }
-    const dmg = (s.damage ?? 0) * e.power * enemyDamageMult(e.mod) * (s.monsterMult ?? 1) * (parried ? parryMult : 1);
     // Топор-основное: пропущенная атака сжигает накопленные заряды.
     if (!parried && this.axeCharges > 0 && this.mainSlot?.def.parryPerk === 'axe') {
       this.axeCharges = 0;
       this.events.push({ type: 'axeCharge', charges: 0 });
     }
-    const taken = this.damageHero(Math.round(dmg));
-    if (taken > 0 && !parried) {
-      // Мешок разбойника: крадёт при каждом прошедшем ударе; парированный удар не крадёт.
-      for (const o of e.slots) {
-        if (o.def.mode !== 'onHit') continue;
-        const steal = o.stats.stealCoins ?? 0;
-        this.stolen[this.chain[this.index].contract] += steal;
-        this.events.push({ type: 'onHit', uid: o.uid, steal });
+    // Серия закончилась: у монаха — ритуал (пропущен хоть один — вода освящена); после креста — святая вода.
+    if (p.group !== null) {
+      const g = this.groups.get(p.group);
+      if (g) {
+        g.done++;
+        if (parried) g.parried++;
+        if (g.done >= g.total) {
+          this.groups.delete(p.group);
+          if (ENEMIES[e.id].ritual) {
+            const broken = g.parried >= g.total;
+            if (!broken) e.blessed = true; // сорван — просто без освящения
+            e.ritualReady = true;
+            this.events.push({ type: 'ritual', broken });
+            // Святая вода летит сразу за последним ударом креста — без паузы на подготовку (динамика).
+            const water = e.order.find((s) => s.def.afterRitual && s.charges > 0);
+            if (water) {
+              e.actionTimer = 0;
+              this.useEnemyItem(water);
+            }
+          }
+          // Двойной удар копья отбит целиком — щит стражника в случайной точке отрезка: отбей и его, и щит опущен.
+          if (p.kind === 'double' && g.parried >= g.total && e.slots.some((o) => o.stats.guardMult)) {
+            this.addPending(p.slot, 'guard', FEEL.parry.window * FEEL.patterns.guardWindow, 0, null, 0, p.id);
+          }
+        }
       }
     }
+    if (p.kind === 'sack') {
+      if (!parried) this.steal(p.slot);
+      return;
+    }
+    if (p.kind === 'guard') {
+      const guard = e.slots.find((o) => o.stats.guardMult);
+      if (parried && guard) {
+        e.guardBroken = guard.stats.guardBreak ?? 0;
+        this.events.push({ type: 'guardBroken', seconds: e.guardBroken });
+      }
+      return;
+    }
+    if (p.kind === 'escape') {
+      if (!parried) {
+        e.escaped = true;
+        this.events.push({ type: 'escaped', name: enemyName(e.id, e.mod) });
+      }
+      return;
+    }
+    if (p.kind === 'reflect' && parried) {
+      // Бомба отбита — взрывается у врага (блок и Квен её не держат).
+      const dmg = Math.round((s.damage ?? 0) * e.power);
+      e.hp = Math.max(0, e.hp - dmg);
+      this.events.push({ type: 'reflect', damage: dmg });
+      this.events.push({ type: 'enemyHit', taken: dmg, absorbed: 0, buffed: false, firstStrike: false, halved: false, guarded: false, quen: false, item: null });
+      return;
+    }
+    if (e.mod === 'drunk' && this.rng() < MODIFIER_STATS.drunkMiss) {
+      // Пьяный промахнулся: урона нет (заряд всё равно потрачен).
+      this.events.push({ type: 'enemyMiss', name: p.slot.def.name });
+      return;
+    }
+    const dmg = (s.damage ?? 0) * p.mult * e.power * enemyDamageMult(e.mod) * (s.monsterMult ?? 1) * (parried ? parryMult : 1);
+    this.damageHero(Math.round(dmg));
+    if (p.kind === 'reflect') {
+      // Бомба не отбита: герой оглушён — активные предметы не нажимаются.
+      this.heroStun = Math.max(this.heroStun, ENEMY_PATTERN.bombStun);
+      this.events.push({ type: 'heroStun', seconds: ENEMY_PATTERN.bombStun });
+    }
+    // Выпад стражника отбит — сразу кружок щита в конце линии: отбей и его, и щит опущен.
+    if (p.kind === 'thrust' && parried && e.slots.some((o) => o.stats.guardMult)) {
+      this.addPending(p.slot, 'guard', FEEL.parry.window * FEEL.patterns.guardWindow, 0, null, 0, p.id);
+    }
+  }
+
+  /** Мешок не отбит: крадёт из кошелька героя, а когда кошелёк пуст — из награды текущего заказа. */
+  private steal(sack: EnemySlot): void {
+    const e = this.enemy;
+    const n = sack.stats.stealCoins ?? 0;
+    const wallet = Math.min(n, this.wallet);
+    const reward = n - wallet;
+    this.wallet -= wallet;
+    e.stolenWallet += wallet;
+    const k = this.chain[this.index].contract;
+    if (k < this.stolen.length) {
+      this.stolen[k] += reward;
+      e.stolenReward += reward;
+    }
+    this.events.push({ type: 'steal', uid: sack.uid, wallet, reward });
   }
 
   /** Урон герою: сначала съедает блок. Возвращает урон по здоровью. */
@@ -735,9 +1028,20 @@ export class BattleSim {
 
   /** true — бой с текущим врагом закончен. Привал между заказами — только пауза, здоровье не восстанавливается. */
   private checkEnd(): boolean {
-    if (this.enemy.hp <= 0) {
+    const e = this.enemy;
+    if (e.hp <= 0 || e.escaped) {
+      // Вор убит — украденное возвращается; сбежал — пропало.
+      if (e.hp <= 0 && (e.stolenWallet || e.stolenReward)) {
+        this.wallet += e.stolenWallet;
+        const k = this.chain[this.index].contract;
+        if (k < this.stolen.length) this.stolen[k] -= e.stolenReward;
+        this.events.push({ type: 'refund', wallet: e.stolenWallet, reward: e.stolenReward });
+        e.stolenWallet = 0;
+        e.stolenReward = 0;
+      }
       this.status = this.index >= this.chain.length - 1 ? 'won' : 'enemyDown';
-      this.pending = []; // убитый враг уже не ударит: его атаки в полёте отменяются
+      this.pending = []; // убитый (сбежавший) враг уже не ударит: его атаки в полёте отменяются
+      this.groups.clear();
       return true;
     }
     if (this.heroHp <= 0) {

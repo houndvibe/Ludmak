@@ -70,6 +70,16 @@ export interface GridViewConfig<T extends Placement> {
   onDoubleClick?: (it: T) => void;
   /** 'edit': слить (перетаскиваемый исчезает, цель повышает уровень). */
   onMerge?: (dragged: T, target: T) => void;
+  /**
+   * Место вне сетки, куда можно отпустить предмет, не перемещая его (поле основного оружия): hit — точка над ним,
+   * accept — этот предмет туда можно; onDrop — отпустили (предмет возвращается на своё место), onHover — подсветка.
+   */
+  dropZone?: {
+    hit: (x: number, y: number) => boolean;
+    accept: (it: T) => boolean;
+    onDrop: (it: T) => void;
+    onHover?: (it: T | null) => void;
+  };
   /** 'edit': перетаскиваемый предмет над целью слияния (target) или ушёл с неё (оба null) — превью результата. */
   onMergeHover?: (dragged: T | null, target: T | null) => void;
   /** 'edit': метки над соседями цели, если слить (что у них изменится). Метка «Слияние → ★N» на цели — всегда. */
@@ -98,7 +108,8 @@ class Piece {
   private rarityFrame: Phaser.GameObjects.Rectangle;
   private badge: Phaser.GameObjects.Text;
   private starText: Phaser.GameObjects.Text;
-  private labels: Phaser.GameObjects.Container;
+  /** Метки соседства — отдельно от предмета, в слое над полосками связей (GridView двигает их за предметом). */
+  readonly labels: Phaser.GameObjects.Container;
   /** Метка основного оружия: золотые клинки в правом верхнем углу. */
   private mainMark: Phaser.GameObjects.Image;
   private fw = 0;
@@ -117,7 +128,7 @@ class Piece {
     this.starText = scene.add.text(0, 0, '', { ...bold, fontSize: '24px', color: '#ffd45a' }).setOrigin(0, 0);
     this.labels = scene.add.container(0, 0);
     this.mainMark = scene.add.image(0, 0, statIconKey('parry')).setVisible(false);
-    this.cont = scene.add.container(0, 0, [this.img, this.shade, this.rarityFrame, this.frame, this.badge, this.starText, this.mainMark, this.labels]);
+    this.cont = scene.add.container(0, 0, [this.img, this.shade, this.rarityFrame, this.frame, this.badge, this.starText, this.mainMark]);
   }
 
   /** Картинка рисуется в исходной форме w×h и поворачивается на 90°; остальное — по занимаемому месту. */
@@ -234,6 +245,12 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     this.add(g);
     this.linkLayer = scene.add.graphics();
     this.add(this.linkLayer);
+    // Метки соседства — выше полосок связей: каждый кадр едут за своими предметами.
+    const syncLabels = () => {
+      for (const p of this.pieces.values()) p.labels.setPosition(p.cont.x, p.cont.y).setAlpha(p.cont.alpha).setVisible(p.cont.visible);
+    };
+    scene.events.on(Phaser.Scenes.Events.POST_UPDATE, syncLabels);
+    this.once(Phaser.GameObjects.Events.DESTROY, () => scene.events.off(Phaser.Scenes.Events.POST_UPDATE, syncLabels));
 
     for (const it of cfg.items()) {
       if (cfg.mode === 'edit' || it.inGrid) this.createPiece(it);
@@ -290,6 +307,7 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     });
     if (this.mainUid === it.uid) p.setMain(true);
     this.add(p.cont);
+    this.add(p.labels);
     this.pieces.set(it.uid, p);
   }
 
@@ -301,6 +319,7 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     for (const [uid, p] of this.pieces) {
       if (!p.removing && !items.some((i) => i.uid === uid)) {
         p.cont.destroy();
+        p.labels.destroy();
         this.pieces.delete(uid);
       }
     }
@@ -431,6 +450,8 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
       const p = this.pieces.get(drag);
       if (p) this.bringToTop(p.cont);
     }
+    // Метки соседства — поверх полосок, значков цепи и перетаскиваемого предмета.
+    for (const p of this.pieces.values()) this.bringToTop(p.labels);
   }
 
   /** Перелистнуть зону «вне сумок» на delta страниц. */
@@ -492,6 +513,7 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
       ease: 'Cubic.easeIn',
       onComplete: () => {
         p.cont.destroy();
+        p.labels.destroy();
         this.pieces.delete(uid);
       },
     });
@@ -676,7 +698,14 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
       this.pressed = null;
       this.pickUp(pr.uid, p);
     }
-    if (this.dragging) this.layoutDragged(p.x - this.x, p.y - this.y);
+    if (this.dragging) {
+      this.layoutDragged(p.x - this.x, p.y - this.y);
+      const z = this.cfg.dropZone;
+      if (z?.onHover) {
+        const it = this.item(this.dragging.uid)!;
+        z.onHover(z.hit(p.x, p.y) && z.accept(it) ? it : null);
+      }
+    }
   }
 
   private onUp(p: Phaser.Input.Pointer): void {
@@ -685,13 +714,20 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     const it = this.item(this.dragging.uid)!;
     const saved = this.dragging.saved;
     const merge = this.overGrid(it) ? this.mergeTarget(it) : null;
+    const zone = this.cfg.dropZone;
+    const toZone = !!zone && zone.hit(p.x, p.y) && zone.accept(it);
     this.dragging = null;
     this.notifyMergeHover(null, null);
+    zone?.onHover?.(null);
     this.preview!.clear();
     this.previewLinks = [];
     this.previewRect = null;
     this.showLabels(null);
-    if (merge) {
+    if (toZone) {
+      // Отпустили над полем (основное оружие): предмет остаётся, где был.
+      Object.assign(it, { ...saved, uid: it.uid });
+      zone!.onDrop(it);
+    } else if (merge) {
       Object.assign(it, { ...saved, uid: it.uid });
       this.cfg.onMerge!(it, merge); // перетаскиваемый исчезает из списка — layout() уберёт его спрайт
       this.flash(merge.uid);

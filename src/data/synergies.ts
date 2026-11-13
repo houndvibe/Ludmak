@@ -22,13 +22,19 @@ export interface Selector {
  * disable   — цель отключена (сильнее любых бонусов), label — подпись на метке («Сгорит»).
  * poison    — лечение цели превращается в урон по герою.
  * explode   — с шансом chance цель взрывается в начале боя: урон damage герою, все заряды теряются.
+ * flat      — цели +amount единиц урона (не процент; складывается от каждого соседа, поверх процентов).
+ * slow      — цель бьёт реже: к её перезарядке +seconds (складывается от каждого соседа).
+ * cover     — щит прикрывает цель: от этого щита она получает только долю share его медлительности.
  */
 export type SynergyEffect =
   | { kind: 'boost'; stat: 'damage' | 'all'; amount: number; aura?: boolean }
   | { kind: 'auraBoost'; amount: number }
   | { kind: 'disable'; label: string }
   | { kind: 'poison' }
-  | { kind: 'explode'; chance: number; damage: number };
+  | { kind: 'explode'; chance: number; damage: number }
+  | { kind: 'flat'; amount: number }
+  | { kind: 'slow'; seconds: number }
+  | { kind: 'cover'; share: number };
 
 export interface SynergyRule {
   id: string;
@@ -53,6 +59,10 @@ export const SYNERGIES: SynergyRule[] = [
   { id: 'curse_silver', title: 'Проклятие против Серебра', source: { tag: 'curse' }, target: { tag: 'silver' }, effect: { kind: 'boost', stat: 'damage', amount: SYNERGY.curseVsSilver } },
   { id: 'alchemy_weapon', title: 'Алхимия к оружию', source: { category: 'alchemy' }, target: { category: 'weapon' }, effect: { kind: 'boost', stat: 'damage', amount: SYNERGY.alchemyWeapon } },
   { id: 'alchemy_food', title: 'Алхимия травит Еду', source: { category: 'alchemy' }, target: { category: 'food' }, effect: { kind: 'poison' } },
+  { id: 'weapon_weapon', title: 'Оружие к оружию', source: { category: 'weapon' }, target: { category: 'weapon' }, effect: { kind: 'flat', amount: SYNERGY.weaponWeapon } },
+  { id: 'weapon_weapon_slow', title: 'Клинки мешают друг другу', source: { category: 'weapon' }, target: { category: 'weapon' }, effect: { kind: 'slow', seconds: SYNERGY.weaponWeaponSlow } },
+  { id: 'shield_cover', title: 'Щит прикрывает', source: { category: 'armor' }, target: { category: 'weapon' }, effect: { kind: 'cover', share: SYNERGY.shieldCover } },
+  { id: 'shield_shield', title: 'Стена щитов', source: { category: 'armor' }, target: { category: 'armor' }, effect: { kind: 'boost', stat: 'all', amount: SYNERGY.shieldShield } },
   { id: 'food_amulet', title: 'Еда к амулету', source: { category: 'food' }, target: { category: 'amulet' }, effect: { kind: 'auraBoost', amount: SYNERGY.foodAmulet } },
   // Личные ауры амулетов.
   {

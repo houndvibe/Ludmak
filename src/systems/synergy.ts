@@ -254,13 +254,51 @@ export function computePower(allItems: OwnedItem[], blocked?: BlockRule): PowerR
       p.final[k] = Math.max(0, p.base[k]! * (1 + bonus));
     }
   }
-  // 4. Медлительность от щитов: пассивные предметы с уроном бьют реже (перезарядка + сумма по работающим щитам).
-  const slow = shieldSlow(items, powers);
-  if (slow > 0) {
-    for (const it of items) {
-      const p = powers.get(it.uid)!;
-      if (ITEMS[it.id].mode === 'passive' && p.base.damage && p.base.cooldown) p.final.cooldown = p.base.cooldown + slow;
+  // 4а. Прибавка единицами урона (оружие к оружию): сумма от каждого соседа, поверх процентов.
+  for (const rule of SYNERGIES) {
+    const ef = rule.effect;
+    if (ef.kind !== 'flat') continue;
+    for (const [s, t] of pairs(rule, false)) {
+      const p = powers.get(t.uid)!;
+      if (!p.base.damage) continue;
+      p.final.damage = (p.final.damage ?? 0) + ef.amount;
+      add(rule, s.uid, t.uid, `+${ef.amount} урон`, true);
     }
+  }
+  // 4. Замедление от соседей (клинки мешают друг другу): к перезарядке цели — сумма от каждого соседа.
+  const slowBy = new Map<number, number>();
+  for (const rule of SYNERGIES) {
+    const ef = rule.effect;
+    if (ef.kind !== 'slow') continue;
+    for (const [s, t] of pairs(rule, false)) {
+      const p = powers.get(t.uid)!;
+      if (!p.base.cooldown) continue;
+      slowBy.set(t.uid, (slowBy.get(t.uid) ?? 0) + ef.seconds);
+      add(rule, s.uid, t.uid, `+${ef.seconds} с к перезарядке`, false);
+    }
+  }
+  // 5. Медлительность от щитов: пассивные предметы с уроном бьют реже — сумма по работающим щитам; оружие, касающееся
+  //    щита, получает от него только долю (правило cover «Щит прикрывает»).
+  const cover = new Map<string, number>(); // `${щит}:${оружие}` → доля медлительности
+  for (const rule of SYNERGIES) {
+    const ef = rule.effect;
+    if (ef.kind !== 'cover') continue;
+    for (const [s, t] of pairs(rule, false)) {
+      if (!ITEMS[s.id].parryShield) continue;
+      cover.set(`${s.uid}:${t.uid}`, ef.share);
+      add(rule, s.uid, t.uid, `Щит прикрывает: медлительность ${Math.round(ef.share * 100)}%`, true);
+    }
+  }
+  const shields = items.filter((s) => ITEMS[s.id].parryShield && !powers.get(s.uid)!.disabled);
+  for (const it of items) {
+    const p = powers.get(it.uid)!;
+    if (!p.base.cooldown) continue;
+    let shield = 0;
+    if (ITEMS[it.id].mode === 'passive' && p.base.damage) {
+      for (const s of shields) shield += SHIELD_SLOW_BY_STAR[starOf(s) - 1] * (cover.get(`${s.uid}:${it.uid}`) ?? 1);
+    }
+    const extra = shield + (slowBy.get(it.uid) ?? 0);
+    if (extra > 0) p.final.cooldown = Math.round((p.base.cooldown + extra) * 100) / 100;
   }
   return { powers, effects };
 }

@@ -12,7 +12,7 @@ import { rectMask, type Placement } from '../systems/backpack';
 import { enemyPower } from '../systems/battle';
 import { run } from '../state';
 import { FEEL } from '../config/feel';
-import { addChips, addModifierBadge, addText, C, enemyItemChips, fit, H, TITLE, W, withHoverTip } from '../ui';
+import { addChips, addModifierBadge, addText, C, enemyItemChips, fit, H, TIP_DEPTH, TITLE, W, withHoverTip } from '../ui';
 import { GridView } from './GridView';
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -28,7 +28,7 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
 
   constructor(scene: Phaser.Scene) {
     super(scene, 0, 0);
-    this.setDepth(500).setVisible(false);
+    this.setDepth(TIP_DEPTH).setVisible(false); // выше затемнения обучения
     scene.add.existing(this);
     // Окно прячется, когда мышь ушла и со строки врага, и с самого окна.
     const onMove = (p: Phaser.Input.Pointer) => {
@@ -161,7 +161,8 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
     const height = bodyY + Math.max(leftH, rightH) + L.pad;
 
     // Фон — позади всего; окно сразу под строкой врага (не влезает — над ней).
-    const bg = s.add.rectangle(0, 0, w, height, 0x0c0a10, 0.97).setOrigin(0).setStrokeStyle(2, C.border);
+    // Фон интерактивный: ловит мышь, поэтому строки врагов под окном не срабатывают, пока курсор над окном.
+    const bg = s.add.rectangle(0, 0, w, height, 0x0c0a10, 0.97).setOrigin(0).setStrokeStyle(2, C.border).setInteractive();
     this.add(bg);
     this.sendToBack(bg);
     const x = Phaser.Math.Clamp(anchor.x, 10, W - w - 10);
@@ -187,10 +188,11 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
     const A = UI_ART.shopCard;
     const tex = s.textures.exists(uiShopCardKey('plain'));
     const Lc = tex ? A.plain : A.fallback;
+    // Фон карточки тоже ловит мышь (строки под ней не срабатывают).
     card.add(
       tex
-        ? s.add.image(0, 0, uiShopCardKey('plain')).setOrigin(0)
-        : s.add.rectangle(0, 0, A.w, A.h, C.panel, 0.95).setOrigin(0).setStrokeStyle(2, C.border),
+        ? s.add.image(0, 0, uiShopCardKey('plain')).setOrigin(0).setInteractive()
+        : s.add.rectangle(0, 0, A.w, A.h, C.panel, 0.95).setOrigin(0).setStrokeStyle(2, C.border).setInteractive(),
     );
     card.add(fit(s.add.image(A.w / 2, Lc.iconY, enemyItemKey(d.id)), Lc.iconSize, Lc.iconSize));
     card.add(addText(s, A.w / 2, Lc.nameY, d.name, 28, C.text, { ...TITLE, align: 'center', wordWrap: { width: A.w - 2 * Lc.pad } }).setOrigin(0.5));

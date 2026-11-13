@@ -5,10 +5,13 @@ import { restoreMute } from '../components/Sound';
 import {
   ASSET_MANIFEST,
   HOME_LAYOUT,
+  HOME_WINDOW_MASK_KEY,
   MENU_ART,
   menuArtKey,
   menuEyesKey,
   menuShardKey,
+  SEAL_IMPRINT_KEY,
+  SEAL_IMPRINT_PATH,
   SEAL_STAMP_KEY,
   SEAL_STAMP_PATH,
   SHOP_LAYOUT,
@@ -62,8 +65,10 @@ export class BootScene extends Phaser.Scene {
     MENU_ART.eyes.forEach((e, n) => this.load.image(menuEyesKey(n), e.path));
     MENU_ART.shards.forEach((_, n) => this.load.image(menuShardKey(n), `ui/menu/shard_${n}.png`));
     this.load.image(SEAL_STAMP_KEY, SEAL_STAMP_PATH);
+    this.load.image(SEAL_IMPRINT_KEY, SEAL_IMPRINT_PATH);
     for (const s of ['plain', 'rare'] as const) this.load.image(uiSourceKey(`shop_card_${s}`), UI_ART.shopCard[s].path);
     this.load.image(BG_HOME_CLOSED_KEY, BG_HOME_CLOSED_PATH);
+    if (HOME_LAYOUT.windowMask) this.load.image(HOME_WINDOW_MASK_KEY, HOME_LAYOUT.windowMask.path);
     for (const key of AUDIO_KEYS) this.load.audio(key, `${AUDIO_DIR}${key}.${AUDIO_FORMATS[0]}`);
   }
 

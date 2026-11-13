@@ -27,6 +27,7 @@ import {
   itemRarityFrame,
   itemStatChips,
   TITLE,
+  TIP_DEPTH,
   W,
 } from '../ui';
 
@@ -97,6 +98,7 @@ export class BackpackScene extends Phaser.Scene {
     );
     this.countText = addText(this, L.grid.x, 200, '', 26, C.accent);
     this.mainSlot = this.add.container(0, 0).setDepth(11);
+    this.mainGlow = null;
     this.addHideLabelsCheckbox();
 
     // «Вне сумок» — внутренность сундука на фоне; подпись и страницы — на крышке.
@@ -132,7 +134,7 @@ export class BackpackScene extends Phaser.Scene {
       lineSpacing: 3,
     })
       .setOrigin(0.5, 1)
-      .setDepth(100)
+      .setDepth(TIP_DEPTH)
       .setVisible(false);
     const onPanel = (p: Phaser.Input.Pointer) => {
       const r = L.power;
@@ -196,10 +198,24 @@ export class BackpackScene extends Phaser.Scene {
       preview: (it, col, row, rotated) => this.previewLabels(it, col, row, rotated),
       // Двойной клик по оружию или щиту — сделать основным (курсор в бою).
       onDoubleClick: (it) => {
-        if (!canBeMain(it)) return;
-        setMain(it.uid);
+        if (!canBeMain(it) || run.mainUid === it.uid) return;
+        setMain(it.uid); // снять основное нельзя — только сменить на другое
         sfx(this, 'ui_click');
         this.refresh();
+      },
+      // Оружие или щит, отпущенные над полем «Основное», — становятся основным (сам предмет остаётся в сумках).
+      dropZone: {
+        hit: (x, y) => {
+          const m = L.mainSlot;
+          return x >= m.x && x <= m.x + m.size && y >= m.y && y <= m.y + m.size;
+        },
+        accept: (it) => canBeMain(it),
+        onDrop: (it) => {
+          setMain(it.uid);
+          sfx(this, 'ui_click');
+          this.refresh();
+        },
+        onHover: (it) => this.mainSlotGlow(!!it),
       },
       canMerge: (a, b) => canMerge(a, b),
       onMerge: (a, b) => mergeItems(a.uid, b.uid),
@@ -211,6 +227,9 @@ export class BackpackScene extends Phaser.Scene {
       },
       mergeLabels: (a, b) => this.mergeNeighborLabels(a, b),
       onChange: () => {
+        // Основное убрали из сумок (вне сумок) — оно больше не основное.
+        const main = mainItem();
+        if (main && !main.inGrid) setMain(null);
         this.refresh();
         tutorialDone(this, 'drag'); // обучение: предмет переложили
       },
@@ -373,43 +392,42 @@ export class BackpackScene extends Phaser.Scene {
 
   /** Поле «Основное оружие» слева от сетки: картинка выбранного; двойной клик по полю — снять выбор. */
   private mainSlot!: Phaser.GameObjects.Container;
-  private mainSlotLast = 0;
+  /** Подсветка поля «Основное», пока над ним держат оружие или щит. */
+  private mainGlow: Phaser.GameObjects.Graphics | null = null;
+
+  private mainSlotGlow(on: boolean): void {
+    const m = BACKPACK_LAYOUT.mainSlot;
+    if (!this.mainGlow) this.mainGlow = this.add.graphics().setDepth(12);
+    this.mainGlow.clear();
+    if (on) this.mainGlow.fillStyle(0x4caf50, 0.25).fillRect(m.x, m.y, m.size, m.size).lineStyle(4, 0x4caf50, 1).strokeRect(m.x, m.y, m.size, m.size);
+  }
 
   private drawMainSlot(): void {
     const m = BACKPACK_LAYOUT.mainSlot;
     this.mainSlot.removeAll(true);
     const item = mainItem();
     if (!item) setMain(null);
-    const frame = this.add.rectangle(m.x, m.y, m.size, m.size, 0x000000, 0.55).setOrigin(0).setStrokeStyle(3, 0xe0b65a);
-    const label = addText(this, m.x + m.size / 2, m.labelY, 'Основное', 20, C.accent, { stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5);
+    // Нет основного — красная рамка и предупреждение: парировать нечем.
+    const frame = this.add.rectangle(m.x, m.y, m.size, m.size, 0x000000, 0.55).setOrigin(0).setStrokeStyle(3, item ? 0xe0b65a : 0xe05050);
+    const label = addText(this, m.x + m.size / 2, m.labelY, 'Основное', 20, item ? C.accent : C.bad, { stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5);
     this.mainSlot.add([frame, label]);
     const hint = item
-      ? `Основное оружие: ${ITEMS[item.id].name}${item.inGrid ? '' : ' — вне сумок, в бою не работает'}. Это курсор в бою: им отбиваешь атаки. Двойной клик по другому оружию — сменить, по этому полю — снять.`
-      : 'Основное оружие не выбрано — в бою не отбить ни одной атаки. Двойной клик по оружию или щиту в сумках — сделать основным.';
+      ? `Основное оружие: ${ITEMS[item.id].name}. Это курсор в бою: им отбиваешь атаки. Сменить — двойной клик по другому оружию или щиту в сумках или перетащи его сюда. Убрать основное из сумок — оно перестанет быть основным.`
+      : 'Нечем парировать! Основное оружие не выбрано — в бою не отбить ни одной атаки, курсора на поле не будет. Двойной клик по оружию или щиту в сумках или перетащи его сюда — сделать основным.';
     if (item) {
-      const img = fit(this.add.image(m.x + m.size / 2, m.y + m.size / 2, itemKey(item.id)), m.size - 16, m.size - 16);
-      if (!item.inGrid) img.setAlpha(0.4);
-      this.mainSlot.add(img);
+      this.mainSlot.add(fit(this.add.image(m.x + m.size / 2, m.y + m.size / 2, itemKey(item.id)), m.size - 16, m.size - 16));
     } else {
-      this.mainSlot.add(fit(this.add.image(m.x + m.size / 2, m.y + m.size / 2, statIconKey('parry')), m.size * 0.5, m.size * 0.5).setAlpha(0.35));
+      this.mainSlot.add(
+        addText(this, m.x + m.size / 2, m.y + m.size / 2, 'Нечем\nпарировать', 20, C.bad, { fontStyle: 'bold', align: 'center', stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5),
+      );
     }
-    frame.setInteractive({ useHandCursor: !!item });
+    // Снять основное нельзя — поле только показывает его и подсказку.
+    frame.setInteractive();
     frame.on('pointerover', () => {
       const b = frame.getBounds();
       this.tip.setText(hint).setPosition(Math.max(PANEL.tipW / 2 + 20, b.centerX), b.top - 6).setVisible(true);
     });
     frame.on('pointerout', () => this.tip.setVisible(false));
-    frame.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (p.button !== 0 || !mainItem()) return;
-      const now = this.time.now;
-      if (now - this.mainSlotLast < FEEL.doubleClickMs) {
-        this.mainSlotLast = 0;
-        setMain(null);
-        sfx(this, 'ui_click');
-        this.tip.setVisible(false);
-        this.refresh();
-      } else this.mainSlotLast = now;
-    });
     this.view.setMain(run.mainUid);
   }
 

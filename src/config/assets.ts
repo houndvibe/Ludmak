@@ -82,6 +82,8 @@ export interface AssetEntry {
 
 export const HERO_KEY = "portrait_hero";
 export const BG_NIGHT_KEY = "bg_night";
+/** Фон итогов ночи (лес у тропы). */
+export const BG_RESULTS_KEY = "bg_results";
 export const BG_BATTLE_KEY = "bg_battle";
 export const BG_HORSE_KEY = "bg_horse";
 export const BG_HOME_KEY = "bg_home";
@@ -91,6 +93,8 @@ export const BG_HOME_KEY = "bg_home";
  */
 export const BG_HOME_CLOSED_KEY = "bg_home_closed";
 export const BG_HOME_CLOSED_PATH = "backgrounds/home_closed.webp";
+/** Маска проёма окошка в двери (HOME_LAYOUT.windowMask). */
+export const HOME_WINDOW_MASK_KEY = "ui_home_window_mask";
 
 export const enemyKey = (id: EnemyId) => `portrait_enemy_${id}`;
 export const clientKey = (id: ClientId) => `portrait_client_${id}`;
@@ -159,12 +163,15 @@ export const UI_ART = {
    * chipsY / chipH — первый ряд характеристик: ровно в двух нарисованных ячейках (там свой фон не рисуется), следующие ряды — ниже.
    * Нет картинки — карточка рисуется кодом с раскладкой fallback.
    */
+  // Название, теги (pillsY) и характеристики (chipsY) у обычной и редкой карточки на одной высоте; картинка с клетками — над
+  // названием. slotRows — сколько рядов характеристик лежат на нарисованных полосах и ячейках карточки (без своего фона):
+  // у обычной — полоса 250–289 и ячейки 298–336, у редкой — ячейки 252–294.
   shopCard: {
     w: 320,
     h: 422,
-    plain: { path: "ui/shop_card.webp", pad: 24, iconY: 128, iconSize: 140, nameY: 228, pillsY: 255, chipsY: 299, chipH: 38 },
-    rare: { path: "ui/shop_card_rare.webp", pad: 30, iconY: 112, iconSize: 136, nameY: 190, pillsY: 213, chipsY: 253, chipH: 41 },
-    fallback: { pad: 16, iconY: 100, iconSize: 150, nameY: 192, pillsY: 222, chipsY: 266, chipH: 44 },
+    plain: { path: "ui/shop_card.webp", pad: 24, iconY: 112, iconSize: 136, nameY: 192, pillsY: 215, chipsY: 253, chipH: 40, slotRows: 2 },
+    rare: { path: "ui/shop_card_rare.webp", pad: 30, iconY: 112, iconSize: 136, nameY: 192, pillsY: 215, chipsY: 253, chipH: 40, slotRows: 1 },
+    fallback: { pad: 16, iconY: 100, iconSize: 150, nameY: 192, pillsY: 222, chipsY: 266, chipH: 44, slotRows: 0 },
   },
 };
 export type ShopCardStyle = "plain" | "rare";
@@ -258,8 +265,16 @@ export const PORTRAIT_LIFE: Record<string, PortraitLifeArt> = {
 export const HOME_LAYOUT = {
   /** Дверь целиком (зона клика «На охоту / Переждать день»). */
   door: { x: 753, y: 198, w: 368, h: 775 },
-  /** Окошко-задвижка в двери. Портрет монстра обрезается этой фигурой (скруглённый прямоугольник). */
+  /**
+   * Окошко-задвижка в двери (рамка проёма на экране). Портрет монстра обрезается по форме проёма с картинки фона —
+   * маске windowMask (белое — видно); нет маски — скруглённым прямоугольником с radius.
+   */
   window: { x: 867, y: 295, w: 214, h: 238, radius: 26 },
+  /**
+   * Маска проёма окошка по картинке фона (белое — видно): x, y — левый верхний угол маски в пикселях картинки фона.
+   * null — скруглённый прямоугольник window. Для фона home_v2.webp есть готовая: { path: "ui/home_window_mask.png", x: 906, y: 300 }.
+   */
+  windowMask: null as { path: string; x: number; y: number } | null,
   /** Сдвиг портрета внутри окошка по вертикали (px): больше — портрет ниже, видно больше макушки. */
   portraitOffsetY: 0,
   /** Ширина портрета в окошке (px); высота — по пропорциям портрета 512×640. */
@@ -268,9 +283,11 @@ export const HOME_LAYOUT = {
   card: { x: 1190, y: 240, w: 455, h: 560 },
   /**
    * Печать «Принято» на карточке заказа (ui/seal_stamp.png): центр — доля ширины и высоты карточки (правый нижний угол,
-   * поверх «Награда / Неустойка»), размер — доля ширины карточки.
+   * поверх «Награда / Неустойка»), размер — доля ширины карточки. imprint — оттиск: центр картинки оттиска в долях картинки воска
+   * и ширина — доля ширины воска; подобрано по пикселям: внешнее кольцо оттиска (радиус ~126 px его картинки) ложится
+   * на середину светлого кольца капли (центр 235, 255; радиусы 105–133 px картинки воска).
    */
-  stamp: { x: 0.74, y: 0.8, size: 0.36 },
+  stamp: { x: 0.74, y: 0.8, size: 0.36, imprint: { x: 0.498, y: 0.536, size: 0.525 } },
   /**
    * Письмо о ведьмаке (ночь 1, поверх всего): центр и размер пергамента (UI_ART.parchment, растянут), поля текста,
    * размер шрифта, кнопка «Прочитано» — центр по вертикали от верха пергамента.
@@ -300,7 +317,11 @@ export const MENU_LAYOUT = {
   start: { x: 955, y: 661, w: 503, h: 101 },
   skipTutorial: { x: 956, y: 780, w: 387, h: 75 },
   volume: { x: 1472, y: 1005, w: 360, labelY: 972 },
-  debug: { x: 40, y: 1046, size: 24 },
+  /** Галочки внизу слева: «Debug-режим», через gap px — «Медленные кружки». */
+  debug: { x: 40, y: 1046, size: 24, gap: 48 },
+  /** Кнопка «Быстрый бой» и окно выбора: ночь (кнопки 1–5) и враг (портреты в ряд), кнопка «Закрыть». */
+  quickFight: { x: 956, y: 885, w: 387, h: 70 },
+  quickPanel: { x: 960, y: 560, w: 1240, h: 640, portrait: 170, nightBtn: 70 },
 };
 
 /**
@@ -350,9 +371,11 @@ export const menuArtKey = (id: MenuArtId) => `ui_menu_${id}`;
 export const menuEyesKey = (n: number) => `ui_menu_eyes_${n}`;
 export const menuShardKey = (n: number) => `ui_menu_shard_${n}`;
 
-/** Печать «Принято» на заказе (дом): картинка художницы. */
-export const SEAL_STAMP_KEY = "ui_seal_stamp";
-export const SEAL_STAMP_PATH = "ui/seal_stamp.png";
+/** Печать «Принято» на заказе (дом): сначала капля воска, потом на неё оттиск с «Ъ» (картинки художницы). */
+export const SEAL_STAMP_KEY = "ui_seal_wax";
+export const SEAL_STAMP_PATH = "ui/seal_wax.png";
+export const SEAL_IMPRINT_KEY = "ui_seal_imprint";
+export const SEAL_IMPRINT_PATH = "ui/seal_imprint.png";
 
 /** Фон меню: логотип «Людьмак» на тёмной доске. */
 /**
@@ -419,6 +442,12 @@ export const HORSE_ART = {
   cellLineAlpha: 0.5,
 };
 
+/**
+ * Итоги ночи: ширина панели; левая колонка — строки итогов (x и ширина переноса); правая — поверженные враги и журнал боя
+ * (x, ширина, нижний край журнала, шрифт строк журнала).
+ */
+export const RESULTS_LAYOUT = { panelW: 1720, leftX: 140, leftW: 860, rightX: 1060, rightW: 720, logBottom: 900, logSize: 18 };
+
 /** Раскладка экрана рюкзака (редактирование). */
 export const BACKPACK_LAYOUT = {
   /** Размер клетки сетки, px. */
@@ -478,7 +507,7 @@ export const SHOP_LAYOUT = {
   tiles: { x: 1364, y: 360, w: 220, h: 104, gap: 10, perRow: 2, rows: 5 },
   /** Стрелки страниц вещей и номер страницы (по центру) — внизу мешка. */
   bagNav: { prevX: 1420, nextX: 1760, pageX: 1590, y: 960, w: 90, h: 44 },
-  /** Кнопка «← Домой» — под мешком: центр и размер. */
+  /** Кнопка «Домой →» — под мешком: центр и размер. */
   home: { x: 1590, y: 1036, w: 520, h: 70 },
 };
 
@@ -523,6 +552,11 @@ export const BATTLE_LAYOUT = {
   bannerY: 380,
   /** Нижний край подсказки о предмете (растёт вверх). */
   infoBottom: 1032,
+  /**
+   * Журнал боя — полоса под сумкой врага: левый верхний угол, размер, прозрачность фона, отступ, строк, шрифт,
+   * насколько тусклее каждая строка выше нижней.
+   */
+  log: { x: 1300, y: 925, w: 520, h: 140, alpha: 0.55, pad: 8, lines: 6, size: 17, fade: 0.12 },
   /** Зона, где появляются картинки атак врага для парирования (левый верхний угол и размер): между сетками. */
   parryZone: { x: 880, y: 360, w: 560, h: 500 },
   /** Картинка всех летящих атак врага вместо предмета врага (для тестов); null — картинка самого предмета врага. */
@@ -572,7 +606,12 @@ export const ASSET_MANIFEST: AssetEntry[] = [
     stub: { kind: "category", category: id } as StubSpec,
   })),
   { key: ICON_LINK_KEY, path: "icons/link.png", stub: { kind: "link" } },
-  { key: BG_HOME_KEY, path: "backgrounds/home.webp", stub: { kind: "home" } },
+  { key: BG_HOME_KEY, path: "backgrounds/home.webp", stub: { kind: "home" } }, // вариант фона — backgrounds/home_v2.webp (раскладка не подогнана)
+  {
+    key: BG_RESULTS_KEY,
+    path: "backgrounds/results.webp",
+    stub: { kind: "background", label: "results", w: 1920, h: 1080, color: "#15131c" },
+  },
   {
     key: BG_NIGHT_KEY,
     path: "backgrounds/bg_night.png",

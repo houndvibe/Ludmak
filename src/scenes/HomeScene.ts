@@ -1,7 +1,7 @@
 // Дом Людьмака — центральный экран ночи. Монстры по одному подходят к окошку в двери с заказами.
 // Пока очередь не закончилась, магазин, сумки и дверь закрыты.
 import * as Phaser from 'phaser';
-import { BG_HOME_CLOSED_KEY, BG_HOME_KEY, clientKey, HOME_LAYOUT, menuShardKey, MENU_ART, SEAL_STAMP_KEY, statIconKey, UI_ART, UI_PARCHMENT_KEY } from '../config/assets';
+import { BG_HOME_CLOSED_KEY, BG_HOME_KEY, clientKey, HOME_LAYOUT, HOME_WINDOW_MASK_KEY, menuShardKey, MENU_ART, SEAL_IMPRINT_KEY, SEAL_STAMP_KEY, statIconKey, UI_ART, UI_PARCHMENT_KEY } from '../config/assets';
 import { CLIENTS } from '../data/clients';
 import { ENEMIES } from '../data/enemies';
 import { THANKS_NOTE, WITCHER_LETTER } from '../data/story';
@@ -51,7 +51,7 @@ export class HomeScene extends Phaser.Scene {
   /** Обновить монеты и жизни в шапке. */
   private refreshHeader: () => void = () => {};
   private tooltip!: EnemyTooltip;
-  private windowMask!: Phaser.Display.Masks.GeometryMask;
+  private windowMask!: Phaser.Display.Masks.GeometryMask | Phaser.Display.Masks.BitmapMask;
   /** Задвижка окошка: кусок фона с закрытым окном (или прямоугольник кодом). Закрыта — shutterY, открыта — выше на высоту окна. */
   private shutter!: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
   private shutterY = 0;
@@ -79,15 +79,26 @@ export class HomeScene extends Phaser.Scene {
     this.cardReady = false;
     this.queueShown = false;
     this.stamping = false;
+    this.leaving = false;
 
     addBackground(this, BG_HOME_KEY);
     this.refreshHeader = addHeader(this, 'Дом Людьмака');
 
-    // Окошко: всё, что в нём показывается, обрезается по его форме.
+    // Окошко: всё, что в нём показывается, обрезается по форме проёма — маска с картинки фона (неровные края);
+    // нет маски — скруглённый прямоугольник.
     const wnd = L.window;
-    const maskShape = this.make.graphics({}, false);
-    maskShape.fillStyle(0xffffff).fillRoundedRect(wnd.x, wnd.y, wnd.w, wnd.h, wnd.radius);
-    this.windowMask = maskShape.createGeometryMask();
+    const wm = L.windowMask;
+    if (wm && this.textures.exists(HOME_WINDOW_MASK_KEY)) {
+      const bg = this.textures.get(BG_HOME_KEY).getSourceImage();
+      const k = Math.max(W / bg.width, H / bg.height);
+      const mi = this.make.image({ x: (W - bg.width * k) / 2 + wm.x * k, y: (H - bg.height * k) / 2 + wm.y * k, key: HOME_WINDOW_MASK_KEY }, false);
+      mi.setOrigin(0).setScale(k);
+      this.windowMask = mi.createBitmapMask();
+    } else {
+      const maskShape = this.make.graphics({}, false);
+      maskShape.fillStyle(0xffffff).fillRoundedRect(wnd.x, wnd.y, wnd.w, wnd.h, wnd.radius);
+      this.windowMask = maskShape.createGeometryMask();
+    }
     this.shutter = this.makeShutter();
     // Тень окошка: между портретом (глубина 4) и задвижкой (5); без портрета окошко тёмное.
     this.windowShade = this.add
@@ -114,8 +125,10 @@ export class HomeScene extends Phaser.Scene {
     );
     this.tooltip = new EnemyTooltip(this);
 
-    tutorialAttach(this, (id) => this.tutorialTarget(id));
-    if (run.night === 1 && !run.letterRead) this.showLetter();
+    // Обучение подключается после письма без подписи: пока оно не прочитано, первый шаг не показывается.
+    const attachTutorial = () => tutorialAttach(this, (id) => this.tutorialTarget(id));
+    if (run.night === 1 && !run.letterRead) this.showLetter(attachTutorial);
+    else attachTutorial();
     if (run.finished) {
       this.showEpilogue();
     } else if (queueDone()) {
@@ -161,14 +174,23 @@ export class HomeScene extends Phaser.Scene {
   }
 
   /** Обучение: где на экране элемент для шага (null — ещё не время). */
+  /** Части листа заказа на экране — для шагов обучения (заполняет renderCard). */
+  private cardAreas: { head: Rect; cond: Rect; foes: Rect; money: Rect } | null = null;
+
   private tutorialTarget(id: StepId): StepTarget {
     const L = HOME_LAYOUT;
+    const parts = { cardHead: 'head', cardCondition: 'cond', cardEnemies: 'foes', cardMoney: 'money' } as const;
+    if (id in parts) {
+      if (queueDone() || !this.cardReady || !this.cardAreas) return null;
+      return this.cardAreas[parts[id as keyof typeof parts]];
+    }
     if (id === 'accept') {
       if (queueDone() || !this.cardReady) return null;
       // Вся карточка вместе с кнопкой «Принять» — чтобы можно было прочитать условие.
       return { x: L.card.x, y: L.card.y, w: L.card.w, h: L.card.h + 98 };
     }
     if (!this.queueShown) return null;
+    if (id === 'board') return L.board;
     if (id === 'chest') return L.shop;
     if (id === 'bags') return L.bags;
     if (id === 'door') return L.door;
@@ -298,7 +320,7 @@ export class HomeScene extends Phaser.Scene {
    * Письмо о ведьмаке в начале ночи 1: поверх всего (и обучения), остальное затемнено и не нажимается.
    * «Прочитано» — письмо уходит, дальше ночь как обычно.
    */
-  private showLetter(): void {
+  private showLetter(onRead: () => void): void {
     const Lt = HOME_LAYOUT.letter;
     const cont = this.add.container(0, 0).setDepth(3000);
     // Затемнение ловит клики — до прочтения ничего другого не нажать.
@@ -322,7 +344,15 @@ export class HomeScene extends Phaser.Scene {
     const sign = addText(this, left + Lt.w - Lt.padX, body.y + body.height + 14, WITCHER_LETTER.signature, Lt.size, ink, { fontStyle: 'italic' }).setOrigin(1, 0);
     const btn = new Button(this, Lt.x, top + Lt.buttonY, 320, 70, WITCHER_LETTER.button, () => {
       markLetterRead();
-      this.tweens.add({ targets: cont, alpha: 0, duration: FEEL.fadeMs, onComplete: () => cont.destroy() });
+      this.tweens.add({
+        targets: cont,
+        alpha: 0,
+        duration: FEEL.fadeMs,
+        onComplete: () => {
+          cont.destroy();
+          onRead();
+        },
+      });
     }, 30);
     cont.add([title, body, sign, btn]);
     cont.setAlpha(0);
@@ -386,16 +416,21 @@ export class HomeScene extends Phaser.Scene {
       { h: 28, container: this.card },
     );
     const name = add(addText(this, tx, r.y + p.top + 28, client.name, 40, k.accent, TITLE));
+    // Части листа для обучения: шапка и текст, условие, враги, деньги (прямоугольники на экране).
+    const area = (y0: number, y1: number): Rect => ({ x: r.x + p.px - 8, y: y0 - 6, w: r.w - 2 * p.px + 16, h: y1 - y0 + 12 });
 
     const wrap = { wordWrap: { width: r.w - 2 * p.px } };
     const line = add(addText(this, tx, name.y + name.height + 2, `«${client.quests[c.quest]?.line ?? client.quests[0].line}»`, 22, k.text, { fontStyle: 'italic', ...wrap }));
     // Условие заказчика — под репликой: название словами, что оно делает — плашками с подсказками.
     let y = line.y + line.height + 12;
+    const head = area(r.y + p.top - 20, line.y + line.height);
+    const condY = y;
     const cond = add(addText(this, tx, y, `«${client.condition.title}»`, 22, k.accent, { fontStyle: 'bold', ...wrap }));
     y += cond.height + 6;
     const chips = conditionChips(this, c.client);
     if (chips.length) y += addChips(this, tx, y, chips, { h: 34, maxW: r.w - 2 * p.px, container: this.card }).h + 14;
     else y += 4;
+    const condArea = area(condY, y - 10);
     // Враги: значок вместо «Цель (N):», имена словами — наведение открывает сумку врага.
     const foes = addChips(
       this,
@@ -405,7 +440,8 @@ export class HomeScene extends Phaser.Scene {
       { h: 34, container: this.card },
     );
     const linesX = tx + foes.w + 10;
-    addEnemyLines(this, linesX, y + 3, c.enemies, c.mods, this.tooltip, 24, this.card, { text: k.text, accent: k.accent }, r.x + r.w - p.px - linesX);
+    const linesH = addEnemyLines(this, linesX, y + 3, c.enemies, c.mods, this.tooltip, 24, this.card, { text: k.text, accent: k.accent }, r.x + r.w - p.px - linesX);
+    const foesArea = area(y, y + Math.max(foes.h, linesH + 3));
     // Деньги: слова обычным цветом, монета и число — зелёное (награда) или красное (неустойка).
     const money = (label: string, value: string, color: string, yy: number, hint: string, suffix = '') => {
       const l = add(addText(this, tx, yy, label, 26, k.text));
@@ -431,6 +467,7 @@ export class HomeScene extends Phaser.Scene {
       r.y + r.h - p.bottom - 40,
       `Неустойка ${c.penalty} монет — если погибнешь, не выполнив заказ; при отступлении — часть.${adv ? ' И аванс придётся вернуть.' : ''}`,
     );
+    this.cardAreas = { head, cond: condArea, foes: foesArea, money: area(r.y + r.h - p.bottom - 80, r.y + r.h - p.bottom - 6) };
 
     const by = r.y + r.h + 55;
     // Принять: на лист заказа падает печать, лист держится FEEL.stamp.holdMs — потом монстр уходит.
@@ -466,12 +503,15 @@ export class HomeScene extends Phaser.Scene {
     );
   }
 
+  /** Уходим на охоту (идёт наезд на дверь) — повторное нажатие не срабатывает. */
+  private leaving = false;
+
   /** Идёт печать на заказе: кнопки «Принять / Отказать» не нажимаются. */
   private stamping = false;
 
   /**
-   * Печать на карточке заказа: падает сверху с увеличения и наклоном, бьёт по бумаге (звук, карточка вздрагивает,
-   * разлетаются осколки печати), держится FEEL.stamp.holdMs — потом done().
+   * Печать на карточке заказа: сначала капля воска падает с увеличения и растекается, потом на неё опускается оттиск
+   * с «Ъ» (звук, карточка вздрагивает, воск сминается, разлетаются осколки), держится FEEL.stamp.holdMs — потом done().
    */
   private stampCard(done: () => void): void {
     const F = FEEL.stamp;
@@ -489,6 +529,22 @@ export class HomeScene extends Phaser.Scene {
     const tilt = Phaser.Math.FloatBetween(-F.tiltDeg, F.tiltDeg);
     stamp.setScale(base * F.fromScale).setAngle(tilt * 2).setAlpha(0);
     this.card.add(stamp);
+    // Оттиск — на внутреннем круге капли, с тем же наклоном.
+    const I = S.imprint;
+    const offX = (I.x - 0.5) * stamp.width * base;
+    const offY = (I.y - 0.5) * stamp.height * base;
+    const rad = Phaser.Math.DegToRad(tilt);
+    const ix = x + offX * Math.cos(rad) - offY * Math.sin(rad);
+    const iy = y + offX * Math.sin(rad) + offY * Math.cos(rad);
+    const press = () => {
+      if (!this.textures.exists(SEAL_IMPRINT_KEY)) return impact();
+      const imprint = this.add.image(ix, iy, SEAL_IMPRINT_KEY);
+      const ib = (stamp.width * base * I.size) / imprint.width;
+      imprint.setScale(ib * F.imprintFrom).setAngle(tilt).setAlpha(0);
+      this.card.add(imprint);
+      this.tweens.add({ targets: imprint, scale: ib, alpha: 1, duration: F.imprintMs, ease: 'Quad.easeIn', onComplete: impact });
+    };
+    // Капля воска падает и на миг растекается.
     this.tweens.add({
       targets: stamp,
       scale: base,
@@ -497,9 +553,15 @@ export class HomeScene extends Phaser.Scene {
       duration: F.dropMs,
       ease: 'Quad.easeIn',
       onComplete: () => {
-        // Удар: звук, лист вздрагивает, осколки печати разлетаются.
+        this.tweens.add({ targets: stamp, scaleX: base * F.waxSquash, scaleY: base / F.waxSquash, duration: 35, yoyo: true, ease: 'Quad.easeOut' });
+        this.time.delayedCall(F.imprintDelayMs, press);
+      },
+    });
+    // Оттиск вдавился: звук, лист вздрагивает, воск сминается, осколки разлетаются.
+    const impact = () => {
         sfx(this, this.cache.audio.exists('seal_stamp') ? 'seal_stamp' : 'contract_accept');
-        this.tweens.add({ targets: this.card, y: F.shakePx, duration: 50, yoyo: true, ease: 'Quad.easeOut' });
+        this.tweens.add({ targets: stamp, scaleX: base / F.imprintSquash, scaleY: base * F.imprintSquash, duration: 30, yoyo: true, ease: 'Quad.easeOut' });
+        this.tweens.add({ targets: this.card, y: F.shakePx, duration: 25, yoyo: true, ease: 'Quad.easeOut' });
         for (let i = 0; i < F.shards; i++) {
           const n = i % MENU_ART.shards.length;
           if (!this.textures.exists(menuShardKey(n))) continue;
@@ -519,8 +581,7 @@ export class HomeScene extends Phaser.Scene {
           });
         }
         this.time.delayedCall(F.holdMs, done);
-      },
-    });
+    };
   }
 
   // ─── Доска «Заказы на сегодня» ───────────────────────────────────────────
@@ -635,10 +696,18 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private leaveHouse(): void {
+    if (this.leaving) return;
     sfx(this, 'door_open');
     tutorialDone(this, 'door');
     if (run.accepted.length > 0) {
-      goto(this, 'Battle');
+      // На охоту: камера наезжает на дверь, в конце — затемнение и бой.
+      this.leaving = true;
+      const B = FEEL.battleIntro;
+      const d = HOME_LAYOUT.door;
+      const cam = this.cameras.main;
+      cam.pan(d.x + d.w / 2, d.y + d.h / 2, B.doorMs, 'Cubic.easeIn');
+      cam.zoomTo(B.doorZoom, B.doorMs, 'Cubic.easeIn');
+      this.time.delayedCall(Math.max(0, B.doorMs - FEEL.fadeMs), () => goto(this, 'Battle'));
     } else {
       resolveNight({ kind: 'skip', defeated: 0, stolen: [] });
       goto(this, 'Results');

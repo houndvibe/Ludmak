@@ -22,7 +22,7 @@ export const TAGS: Record<TagId, TagDef> = {
   bomb: { id: 'bomb', name: 'Бомба', kind: 'property', letter: 'Б', color: 0x5a6470 },
   elixir: { id: 'elixir', name: 'Эликсир', kind: 'property', letter: 'Э', color: 0x3f8f7a },
   oil: { id: 'oil', name: 'Масло', kind: 'property', letter: 'М', color: 0x9a7a3a },
-  stun: { id: 'stun', name: 'Контроль', kind: 'property', letter: 'К', color: 0x7a62b0 },
+  stun: { id: 'stun', name: 'Стан', kind: 'property', letter: 'Т', color: 0x7a62b0 },
 };
 
 export const TAG_IDS = Object.keys(TAGS) as TagId[];

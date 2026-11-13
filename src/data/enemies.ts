@@ -23,6 +23,12 @@ export interface EnemyDef {
   dodgeFirstBomb?: boolean;
   /** Оружие (действия категории «Оружие») бьёт каждое по своей перезарядке, одновременно, как у героя (ведьмак). */
   parallelWeapons?: boolean;
+  /** Ритуал (монах): пропущен хоть один удар креста — следующая святая вода освящена (×ENEMY_PATTERN.blessMult); отбиты все — обычная. */
+  ritual?: boolean;
+  /** Бегство (разбойник): здоровье упало ниже ENEMY_PATTERN.escapeBelow — кружок бегства; не отбил — сбежал с украденным. */
+  escape?: boolean;
+  /** Знак Квен (ведьмак): время от времени купол — урон героя не проходит, пока не отбиты ENEMY_PATTERN.quen.parries атаки подряд. */
+  quen?: boolean;
   /** Размер сетки сумки в клетках. */
   bagCols: number;
   bagRows: number;
@@ -58,6 +64,7 @@ export const ENEMIES: Record<EnemyId, EnemyDef> = {
     id: 'razboynik',
     name: 'Разбойник',
     boss: false,
+    escape: true,
     bagCols: 3,
     bagRows: 2,
     bag: [
@@ -69,12 +76,15 @@ export const ENEMIES: Record<EnemyId, EnemyDef> = {
     id: 'monakh',
     name: 'Монах-экзорцист',
     boss: false,
+    ritual: true,
     bagCols: 2,
     bagRows: 4,
     bag: [
       { item: 'staff', col: 0, row: 0 },
       { item: 'holy_water', col: 1, row: 0 },
       { item: 'holy_water', col: 1, row: 1 },
+      { item: 'holy_water', col: 1, row: 2 },
+      { item: 'holy_water', col: 1, row: 3 },
     ],
   },
   aristokrat: {
@@ -94,6 +104,7 @@ export const ENEMIES: Record<EnemyId, EnemyDef> = {
     boss: true,
     dodgeFirstBomb: true,
     parallelWeapons: true,
+    quen: true,
     // Предметы героя в руках ведьмака. Подкова в центре — её касаются все четыре клинка: мечи слева и справа,
     // кинжалы сверху и снизу. Бомба и эликсир — в верхних углах.
     bagCols: 3,

@@ -1,6 +1,7 @@
 // Заказчики и их условия. Числа условий (множители награды и неустойки, двойной удар) — в src/config/balance.ts.
 // Условие действует только в бою с врагами своего заказа; при переходе к врагам другого заказа оно снимается.
 import { CLIENT_PENALTY_MULT, CLIENT_REWARD_MULT, GHOST_FIRST_HIT_MULT, PARRY_REWARD_MULT, PARRY_REWARD_SHARE } from '../config/balance';
+import type { EnemyId } from './enemies';
 import type { ModifierId } from './modifiers';
 import type { Selector } from './synergies';
 
@@ -21,6 +22,8 @@ export interface ClientCondition {
   advance?: boolean;
   /** Отбил не меньше PARRY_REWARD_SHARE атак врагов заказа — награда × PARRY_REWARD_MULT. */
   parryReward?: boolean;
+  /** Этих врагов не бывает в заказах заказчика (у Безголового нет разбойников: пару «кистень + мешок» не отбить целиком). */
+  noEnemies?: EnemyId[];
 }
 
 /**
@@ -138,7 +141,7 @@ export const CLIENTS: Record<ClientId, ClientDef> = {
       { line: 'Палач, что меня укоротил, в церкви за меня свечку ставит. Издевается. Пусть помолится как следует.', mods: ['pious'] },
       { line: 'Слышь… ну, то есть, слушай: моя голова у кого-то в сарае. Глазеет, хозяева спать перестали. Тихо там разберись.', mods: ['lightSleeper'] },
     ],
-    condition: { title: 'Принеси мне их голову', parryReward: true },
+    condition: { title: 'Принеси мне их голову', parryReward: true, noEnemies: ['razboynik'] },
   },
 };
 
