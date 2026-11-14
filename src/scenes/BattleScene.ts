@@ -376,6 +376,26 @@ export class BattleScene extends Phaser.Scene {
         pos = this.sackSpots.get(e.id) ?? this.freeSpot();
         this.sackSpots.delete(e.id);
         break;
+      case 'escape': {
+        // Бегство — в одном из 4 углов поля атак (случайном).
+        const m = r + Q.escapeCornerPad;
+        const corners = [
+          { x: z.x + m, y: z.y + m },
+          { x: z.x + z.w - m, y: z.y + m },
+          { x: z.x + m, y: z.y + z.h - m },
+          { x: z.x + z.w - m, y: z.y + z.h - m },
+        ];
+        pos = corners[Phaser.Math.Between(0, 3)];
+        break;
+      }
+      case 'throw': {
+        // Бросок (святая вода): летит от случайной точки на стороне врага к случайной точке на стороне героя.
+        const y0 = Phaser.Math.Between(z.y + r, z.y + z.h - r);
+        const y1 = Phaser.Math.Between(z.y + r, z.y + z.h - r);
+        path = { x0: z.x + z.w - r, y0, x1: Phaser.Math.Between(z.x + r, z.x + r + (z.w - 2 * r) * Q.throwTo), y1 };
+        pos = { x: path.x0, y: y0 };
+        break;
+      }
       case 'aim': {
         const a = this.aims.get(e.id);
         a?.g.destroy();
@@ -388,12 +408,12 @@ export class BattleScene extends Phaser.Scene {
     }
     const cont = this.add.container(pos.x, pos.y).setDepth(60);
     const glow = this.add.circle(0, 0, r * 0.95, P.glow, P.glowAlpha);
-    // Бегство разбойника — его портрет; остальное — картинка предмета.
+    // Бегство разбойника — сгенерированная иконка побега; остальное — картинка предмета.
     // Щит стражника — картинка его ростового щита (кружок принадлежит копью, но бить надо по щиту).
     const guardItem = this.sim.enemy.slots.find((s) => s.stats.guardMult)?.def.id;
     const key =
       e.kind === 'escape'
-        ? enemyKey(this.sim.enemy.id)
+        ? statIconKey('escape')
         : e.kind === 'guard' && guardItem
           ? enemyItemKey(guardItem)
           : L.parryIconOverride ?? enemyItemKey(e.item);

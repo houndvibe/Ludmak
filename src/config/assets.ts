@@ -38,8 +38,9 @@ export type StatIconId =
   | "noRetreat"
   | "advance"
   | "monster"
-  | "slow"
-  | "parry";
+   | "slow"
+  | "parry"
+  | "escape";
 export const STAT_ICON_IDS: StatIconId[] = [
   "damage",
   "heal",
@@ -59,6 +60,7 @@ export const STAT_ICON_IDS: StatIconId[] = [
   "monster",
   "slow",
   "parry",
+  "escape",
 ];
 
 export type StubSpec =

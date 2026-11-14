@@ -69,9 +69,10 @@ export interface EnemyItemDef {
  * cross   — серия ударов крестом: верх, низ, лево, право; центр каждый раз новый (монах, серебряный меч ведьмака);
  * burst   — очередь уколов внахлёст, каждый в новой точке (аристократ, кинжалы ведьмака);
  * aim     — сначала прицел, потом выстрел с коротким окном (пистоль);
- * reflect — отбитый снаряд летит обратно во врага, пропущенный оглушает героя (бомба ведьмака).
+ * reflect — отбитый снаряд летит обратно во врага, пропущенный оглушает героя (бомба ведьмака);
+ * throw   — бросок: кружок летит от случайной точки на стороне врага к случайной точке на стороне героя (святая вода).
  */
-export type AttackPattern = 'thrust' | 'double' | 'cross' | 'burst' | 'aim' | 'reflect';
+export type AttackPattern = 'thrust' | 'double' | 'cross' | 'burst' | 'aim' | 'reflect' | 'throw';
 
 export const ENEMY_ITEMS: Record<EnemyItemId, EnemyItemDef> = {
   cow_pie: { id: 'cow_pie', name: 'Коровья лепёшка', mode: 'action', category: 'throw', tags: [], w: 1, h: 1, priority: 1 },
@@ -80,7 +81,7 @@ export const ENEMY_ITEMS: Record<EnemyItemId, EnemyItemDef> = {
   spear: { id: 'spear', name: 'Копьё', mode: 'action', category: 'weapon', tags: [], w: 1, h: 4, priority: 9, pattern: 'double' },
   loot_sack: { id: 'loot_sack', name: 'Мешок', mode: 'onHit', category: 'steal', tags: [], w: 2, h: 2, priority: 0 },
   flail: { id: 'flail', name: 'Кистень', mode: 'action', category: 'weapon', tags: [], w: 1, h: 2, priority: 9 },
-  holy_water: { id: 'holy_water', name: 'Святая вода', mode: 'action', category: 'throw', tags: [], w: 1, h: 1, priority: 1, afterRitual: true },
+  holy_water: { id: 'holy_water', name: 'Святая вода', mode: 'action', category: 'throw', tags: [], w: 1, h: 1, priority: 1, afterRitual: true, pattern: 'throw' },
   staff: { id: 'staff', name: 'Посох', mode: 'action', category: 'weapon', tags: [], w: 1, h: 4, priority: 9, pattern: 'cross' },
   pistol: { id: 'pistol', name: 'Пистоль', mode: 'action', category: 'throw', tags: ['fire', 'noisy'], w: 2, h: 1, priority: 1, pattern: 'aim' },
   silver_rapier: { id: 'silver_rapier', name: 'Серебряная шпага', mode: 'action', category: 'weapon', tags: ['silver'], w: 1, h: 3, priority: 9, pattern: 'burst' },

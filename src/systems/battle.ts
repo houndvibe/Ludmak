@@ -853,7 +853,7 @@ export class BattleSim {
         const p = this.addPending(slot, 'aim', W * P.aimWindow, s.aim ?? 0);
         this.events.push({ type: 'aim', id: p.id, item: slot.def.id, seconds: s.aim ?? 0 });
       } else {
-        const kind: AttackKind = pat === 'thrust' ? 'thrust' : pat === 'reflect' ? 'reflect' : 'hit';
+        const kind: AttackKind = pat === 'thrust' ? 'thrust' : pat === 'reflect' ? 'reflect' : pat === 'throw' ? 'throw' : 'hit';
         const p = this.addPending(slot, kind, W * (kind === 'thrust' ? P.thrustWindow : 1), 0);
         p.mult = mult;
         // Мешок разбойника: с каждым ударом оружия — кружок мешка в другом месте; отбить можно что-то одно.
@@ -979,6 +979,18 @@ export class BattleSim {
       if (!parried) {
         e.escaped = true;
         this.events.push({ type: 'escaped', name: enemyName(e.id, e.mod) });
+      } else if (e.stolenWallet || e.stolenReward) {
+        // Бегство отбито: вор роняет долю награбленного (escapeRefundShare), остальное припрятал — пропало навсегда,
+        // поэтому и убийство его после этого уже ничего не вернёт (stolenWallet/stolenReward обнуляются).
+        const share = ENEMY_PATTERN.escapeRefundShare;
+        const wallet = Math.floor(e.stolenWallet * share);
+        const reward = Math.floor(e.stolenReward * share);
+        this.wallet += wallet;
+        const k = this.chain[this.index].contract;
+        if (k < this.stolen.length) this.stolen[k] -= reward;
+        if (wallet || reward) this.events.push({ type: 'refund', wallet, reward });
+        e.stolenWallet = 0;
+        e.stolenReward = 0;
       }
       return;
     }

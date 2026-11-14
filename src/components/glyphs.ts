@@ -54,6 +54,8 @@ export const STAT_GLYPHS: Record<StatIconId, { glyph: GlyphId; color: string }> 
   slow: { glyph: 'hourglass', color: '#e07a50' },
   /** Парирование основным оружием: золотые скрещённые клинки. */
   parry: { glyph: 'swords', color: '#e0b65a' },
+  /** Побег разбойника: фиолетовая молния (в бою подменяется картинкой icons/stats/escape.png). */
+  escape: { glyph: 'bolt', color: '#b05cff' },
 };
 
 /** Значок категории (светлый на цветном круге; цвет круга — CATEGORY_COLORS). */
