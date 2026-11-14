@@ -89,7 +89,7 @@ export class ResultsScene extends Phaser.Scene {
     }, 32);
   }
 
-  private outcomeLine(summary: NightSummary): { text: string; color: number } {
+  private outcomeLine(summary: NightSummary): { text: string; color: string } {
     const total = summary.results.reduce((n, result) => n + result.contract.enemies.length, 0);
     switch (summary.outcome.kind) {
       case 'win': return { text: '✓  Все заказы выполнены', color: C.inkGood };
@@ -186,7 +186,7 @@ export class ResultsScene extends Phaser.Scene {
     if (notes.length) this.drawRichText(notes, C.inkDim, x + 16, y + 77, w - 32, 17);
   }
 
-  private drawMoneyRight(right: number, y: number, value: string, color: number, size: number): void {
+  private drawMoneyRight(right: number, y: number, value: string, color: string, size: number): void {
     const coinSize = size * 0.92;
     const gap = 7;
     const text = addText(this, right - coinSize - gap, y, value, size, color).setOrigin(1, 0);
@@ -195,7 +195,7 @@ export class ResultsScene extends Phaser.Scene {
   }
 
   /** Рисует слова и значки монет по строке, перенося целые слова при нехватке места. */
-  private drawRichText(parts: ResultLinePart[], color: number, x: number, y: number, width: number, fontSize: number): number {
+  private drawRichText(parts: ResultLinePart[], color: string, x: number, y: number, width: number, fontSize: number): number {
     const lineHeight = Math.ceil(fontSize * 1.28);
     const wordGap = Math.max(3, fontSize * 0.17);
     const coinSize = Math.max(13, fontSize * 0.72);

@@ -3,11 +3,12 @@
 // активные применяются нажатием на предмет. Справа — враг и его сумка (только просмотр).
 import * as Phaser from 'phaser';
 import { GridView } from '../components/GridView';
-import { BATTLE_LAYOUT, BG_BATTLE_KEY, enemyItemKey, enemyKey, HERO_KEY, HORSE_ART, itemKey, statIconKey, UI_ART, type CursorBlade } from '../config/assets';
+import { BATTLE_LAYOUT, BG_BATTLE_KEY, enemyItemKey, enemyKey, HERO_KEY, HORSE_ART, itemKey, statIconKey, tagKey, uiIconKey, UI_ART, type CursorBlade } from '../config/assets';
 import { BATTLE_FAST_SPEED, ENEMY_PATTERN, PARRY_PERK } from '../config/balance';
 import { CLIENTS } from '../data/clients';
 import { ENEMIES } from '../data/enemies';
 import { FEEL } from '../config/feel';
+import { drawGlyph } from '../components/glyphs';
 import { tutorialAttach, tutorialBlocking, tutorialDone, tutorialRefresh, type Rect } from '../components/Hints';
 import { playMusic, sfx } from '../components/Sound';
 import { ITEMS, type ItemId } from '../data/items';
@@ -29,6 +30,7 @@ import {
   describeOwnedItem,
   fadeIn,
   fit,
+  FONT,
   goto,
   W,
   addLives,
@@ -94,8 +96,12 @@ export class BattleScene extends Phaser.Scene {
   private doubleLines = new Map<number, Phaser.GameObjects.Graphics>();
   /** Под полосой двойного удара — картинка копья вдоль отрезка. */
   private doubleArt = new Map<number, Phaser.GameObjects.Image>();
-  /** Крест монаха: отрезки от центра к каждому появившемуся кружку серии (по одному рисунку на серию). */
+  /** Крест (монах, серебряный меч ведьмака): рисунок проступает целиком до первого кружка серии, гаснет в её конце. */
   private crossLines = new Map<number, Phaser.GameObjects.Graphics>();
+  /** Порядок сторон креста для каждой серии (индексы CROSS_ORDER): первый крест врага — классический, дальше — перемешанный. */
+  private crossOrders = new Map<number, number[]>();
+  /** Первый крест текущего врага уже показан (сбрасывается на каждого нового врага). */
+  private crossShownForEnemy = false;
   private lineGroupOf = new Map<number, number>();
   /** Где появится мешок разбойника (выбрано, когда появился его кистень): id мешка → точка. */
   private sackSpots = new Map<number, { x: number; y: number }>();
@@ -149,6 +155,8 @@ export class BattleScene extends Phaser.Scene {
     this.doubleLines = new Map();
     this.doubleArt = new Map();
     this.crossLines = new Map();
+    this.crossOrders = new Map();
+    this.crossShownForEnemy = false;
     this.lineGroupOf = new Map();
     this.sackSpots = new Map();
     this.aims = new Map();
@@ -358,25 +366,10 @@ export class BattleScene extends Phaser.Scene {
       }
         break;
       case 'cross': {
-        // Крест как на распятии: c — перекрестье (новое у каждой серии); верх короткий, низ длинный, поперечина — в верхней
-        // части. Точки — верх, низ, лево, право; ко второй точке отрезок растёт от первой, к четвёртой — от третьей.
-        let c = this.groupCenters.get(e.group!);
-        if (!c) {
-          const R = Q.crossR;
-          const xs = CROSS_ORDER.map(([dx]) => dx * R);
-          const ys = CROSS_ORDER.map(([, dy]) => dy * R);
-          c = {
-            x: Phaser.Math.Between(z.x + r - Math.min(...xs), z.x + z.w - r - Math.max(...xs)),
-            y: Phaser.Math.Between(z.y + r - Math.min(...ys), z.y + z.h - r - Math.max(...ys)),
-          };
-          this.groupCenters.set(e.group!, c);
-        }
-        const at = (i: number) => {
-          const [dx, dy] = CROSS_ORDER[i % CROSS_ORDER.length];
-          return { x: c!.x + dx * Q.crossR, y: c!.y + dy * Q.crossR };
-        };
-        pos = at(e.index);
-        if (e.index % 2 === 1) this.growCrossArm(e.group!, at(e.index - 1), pos);
+        // Крест уже проступил телеграфом (событие 'telegraph'); кружок — на конце, идущем следующим в порядке этой серии.
+        const pts = this.crossPoints(e.group!);
+        const order = this.crossOrders.get(e.group!) ?? [0, 1, 2, 3];
+        pos = pts[order[e.index % order.length]];
         break;
       }
       case 'sack':
@@ -437,38 +430,66 @@ export class BattleScene extends Phaser.Scene {
     tutorialRefresh(this); // обучение: первый замах — шаг «Парируй»
   }
 
-  /** Крест: отрезок вырастает от предыдущей точки серии к новой — вертикаль, потом поперечина. */
-  private growCrossArm(group: number, c: { x: number; y: number }, to: { x: number; y: number }): void {
-    const Q = FEEL.patterns;
-    let g = this.crossLines.get(group);
-    if (!g) {
-      g = this.add.graphics().setDepth(59);
-      this.crossLines.set(group, g);
+  /**
+   * Крест: четыре конца серии group (верх, низ, лево, право — CROSS_ORDER) вокруг перекрестья.
+   * Перекрестье — новое у каждой серии; создаётся при первом обращении (обычно — телеграфом).
+   */
+  private crossPoints(group: number): { x: number; y: number }[] {
+    let c = this.groupCenters.get(group);
+    if (!c) {
+      const P = FEEL.parry;
+      const Q = FEEL.patterns;
+      const z = L.parryZone;
+      const r = P.size / 2;
+      const R = Q.crossR;
+      const xs = CROSS_ORDER.map(([dx]) => dx * R);
+      const ys = CROSS_ORDER.map(([, dy]) => dy * R);
+      c = {
+        x: Phaser.Math.Between(z.x + r - Math.min(...xs), z.x + z.w - r - Math.max(...xs)),
+        y: Phaser.Math.Between(z.y + r - Math.min(...ys), z.y + z.h - r - Math.max(...ys)),
+      };
+      this.groupCenters.set(group, c);
     }
-    // Каждая рука — свой рисунок внутри общего (рисуем в отдельный Graphics, чтобы расти независимо).
-    const arm = this.add.graphics().setDepth(59);
-    const done = g;
+    return CROSS_ORDER.map(([dx, dy]) => ({ x: c!.x + dx * FEEL.patterns.crossR, y: c!.y + dy * FEEL.patterns.crossR }));
+  }
+
+  /**
+   * Крест (монах, серебряный меч ведьмака): за seconds до первого удара проступает весь рисунок — игрок видит
+   * все четыре точки, но не их порядок. Порядок сторон: первый крест врага — классический (верх, низ, лево, право),
+   * дальше — перемешанный (каждая сторона ровно раз, крест остаётся крестом).
+   */
+  private telegraphCross(group: number, seconds: number): void {
+    const Q = FEEL.patterns;
+    const pts = this.crossPoints(group);
+    const c = this.groupCenters.get(group)!;
+    const order = [0, 1, 2, 3];
+    if (this.crossShownForEnemy) {
+      // Перемешиваем стороны (визуальная случайность, на исход боя не влияет).
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+    }
+    this.crossShownForEnemy = true;
+    this.crossOrders.set(group, order);
+    const g = this.add.graphics().setDepth(59);
+    this.crossLines.set(group, g);
+    // Рисунок вырастает из перекрестья к четырём концам одновременно.
+    const draw = (k: number) => {
+      if (!g.active) return;
+      g.clear().lineStyle(Q.crossLineWidth, Q.crossLineColor, Q.crossLineAlpha);
+      for (const p of pts) g.lineBetween(c.x, c.y, Phaser.Math.Linear(c.x, p.x, k), Phaser.Math.Linear(c.y, p.y, k));
+    };
+    const ms = seconds * 1000 * this.circleSlow;
+    if (ms <= 0) return draw(1);
     this.tweens.addCounter({
       from: 0,
       to: 1,
-      duration: Q.crossArmMs,
+      duration: ms,
       ease: 'Cubic.easeOut',
-      onUpdate: (tw) => {
-        if (!arm.active) return;
-        const k = tw.getValue() ?? 1;
-        arm
-          .clear()
-          .lineStyle(Q.crossLineWidth, Q.crossLineColor, Q.crossLineAlpha)
-          .lineBetween(c.x, c.y, Phaser.Math.Linear(c.x, to.x, k), Phaser.Math.Linear(c.y, to.y, k));
-      },
-      onComplete: () => {
-        if (!arm.active) return;
-        arm.destroy();
-        if (done.active) done.lineStyle(Q.crossLineWidth, Q.crossLineColor, Q.crossLineAlpha).lineBetween(c.x, c.y, to.x, to.y);
-      },
+      onUpdate: (tw) => draw(tw.getValue() ?? 1),
+      onComplete: () => draw(1),
     });
-    // Растущая рука гаснет вместе с крестом.
-    done.once(Phaser.GameObjects.Events.DESTROY, () => arm.destroy());
   }
 
   /** Двойной удар копья: жёлтый отрезок серии плавно проявляется за seconds до первого удара. */
@@ -584,6 +605,7 @@ export class BattleScene extends Phaser.Scene {
     for (const [grp, g] of this.crossLines) {
       if (this.sim.pending.some((p) => p.group === grp)) continue;
       this.crossLines.delete(grp);
+      this.crossOrders.delete(grp);
       this.tweens.add({ targets: g, alpha: 0, duration: 250, onComplete: () => g.destroy() });
     }
     // Полоса двойного удара гаснет, когда на поле не осталось ни его ударов, ни его щита.
@@ -1035,7 +1057,7 @@ export class BattleScene extends Phaser.Scene {
     });
     sfx(this, 'parry');
     this.sparks(x, y);
-    this.floatText(x, y - P.size * 0.6, PARRY_TEXT[icon.kind] ?? 'Парировано!', C.accent, P.textSize);
+    this.floatWithIcon(x, y - P.size * 0.6, PARRY_TEXT[icon.kind] ?? 'Парировано!', C.accent, statIconKey('parry'), P.textSize);
   }
 
   /** Пропущенная лепёшка: бурая клякса на месте кружка поверх поля — закрывает обзор, клики проходят сквозь. */
@@ -1136,6 +1158,8 @@ export class BattleScene extends Phaser.Scene {
     const sim = this.sim;
     const { contract, mod } = sim.chain[sim.index];
     const def = ENEMIES[sim.enemy.id];
+    // Первый крест каждого врага идёт в классическом порядке (верх, низ, лево, право).
+    this.crossShownForEnemy = false;
     this.enemyImg.setTexture(enemyKey(def.id));
     fit(this.enemyImg, L.enemyPortrait.w, L.enemyPortrait.h);
     // Имя с модификатором бывает длинным: уменьшаем шрифт, чтобы не залезть в середину экрана.
@@ -1328,7 +1352,7 @@ export class BattleScene extends Phaser.Scene {
         const what = e.item ? ITEMS[e.item].name : 'Бомба';
         if (e.quen) this.log(`${what} → Квен поглотил`, C.dim);
         else if (e.taken > 0 || e.absorbed > 0)
-          this.log(`${what} → ${foe()} −${e.taken}${e.absorbed ? ` (блок ${e.absorbed})` : ''}${e.guarded ? ' (в щит)' : ''}`, C.text);
+          this.log(`${what} → ${foe()} −${e.taken}${e.absorbed ? ` (блок ${e.absorbed})` : ''}${e.guarded ? ' (в щит)' : ''}${e.pierced ? ' (пробой блока)' : ''}`, C.text);
         break;
       }
       case 'heroHit':
@@ -1413,127 +1437,148 @@ export class BattleScene extends Phaser.Scene {
         if (e.left <= 0) this.enemyView?.removePiece(e.uid);
         break;
       case 'enemyHit':
-        if (e.absorbed > 0) {
-          this.floatText(L.floatEnemyX, L.floatY + 60, `блок ${e.absorbed}`, F.block);
-          sfx(this, 'block');
-        }
+        if (e.absorbed > 0) sfx(this, 'block');
+        const effects = [
+          e.absorbed > 0 ? `блок ${e.absorbed}` : '',
+          e.firstStrike ? 'удар из тишины' : '',
+          e.halved ? 'урон вполовину' : '',
+          e.guarded ? 'в щит' : '',
+          e.quen ? 'Квен' : '',
+          e.pierced ? 'пробой блока' : '',
+        ].filter(Boolean);
         if (e.taken > 0) {
-          this.floatNumber(L.floatEnemyX, `−${e.taken}`, e.buffed || e.firstStrike ? F.buffedDamage : F.enemyDamage, e.taken);
+          this.floatNumberWithEffects(
+            L.floatEnemyX,
+            `${e.taken}`,
+            e.buffed || e.firstStrike ? F.buffedDamage : F.enemyDamage,
+            e.taken,
+            effects,
+            this.swordGlyph('#ffffff'),
+            true,
+          );
           this.hitFx(this.enemyImg, L.enemyPortrait.x);
           // Клинок героя (оружие без огня: меч, кинжал, топор, серп) звенит, остальное — обычный удар.
           const d = e.item ? ITEMS[e.item] : null;
           sfx(this, d && d.category === 'weapon' && !d.tags.includes('fire') ? 'sword_hit' : 'hit_enemy');
         }
-        if (e.firstStrike) this.floatText(L.floatEnemyX, L.floatY + 60, 'удар из тишины', F.buffedDamage, 26);
-        if (e.halved) this.floatText(L.floatEnemyX, L.floatY + 110, 'урон вполовину', C.dim, 22);
-        if (e.guarded) this.floatText(L.floatEnemyX, L.floatY + 160, 'в щит', C.dim, 22);
-        if (e.quen) this.floatText(L.floatEnemyX, L.floatY + 60, 'Квен', F.block, 26);
+        else if (effects.length) {
+          const effectIcon = e.quen || e.absorbed > 0 || e.guarded ? 'block' : e.firstStrike ? 'buff' : 'damage';
+          this.floatWithIcon(L.floatEnemyX, L.floatY, effects.join(' · '), e.quen ? F.block : C.dim, statIconKey(effectIcon), 26);
+        }
         break;
       case 'heroHit':
-        if (e.absorbed > 0) {
-          this.floatText(L.floatHeroX, L.floatY + 60, `блок ${e.absorbed}`, F.block);
-          sfx(this, 'block');
-        }
+        if (e.absorbed > 0) sfx(this, 'block');
         if (e.taken > 0) {
-          this.floatNumber(L.floatHeroX, `−${e.taken}`, e.self ? F.selfDamage : F.heroDamage, e.taken);
+          this.floatNumberWithEffects(
+            L.floatHeroX,
+            `−${e.taken}`,
+            e.self ? F.selfDamage : F.heroDamage,
+            e.taken,
+            e.absorbed > 0 ? [`блок ${e.absorbed}`] : [],
+            this.swordGlyph('#ff5147'),
+            true,
+          );
           this.hitFx(this.heroImg, L.heroPortrait.x);
           sfx(this, e.self ? 'self_damage' : 'hit_hero');
           if (!e.self && e.taken >= FEEL.shake.heroHitThreshold) this.shake(FEEL.shake.heroHitIntensity, FEEL.shake.heroHitMs);
         }
+        else if (e.absorbed > 0) this.floatWithIcon(L.floatHeroX, L.floatY, `блок ${e.absorbed}`, F.block, statIconKey('block'));
         break;
       case 'heroHeal':
-        this.floatNumber(L.floatHeroX, `+${e.amount}`, F.heal, e.amount);
+        this.floatNumberWithEffects(L.floatHeroX, `+${e.amount}`, F.heal, e.amount, [], statIconKey('heal'), true);
         sfx(this, 'heal');
         break;
       case 'enemyHeal':
-        this.floatNumber(L.floatEnemyX, `+${e.amount}`, F.heal, e.amount);
+        this.floatNumberWithEffects(L.floatEnemyX, `+${e.amount}`, F.heal, e.amount, [], statIconKey('heal'), true);
         sfx(this, 'heal');
         break;
       case 'heroBlock':
-        this.floatText(L.floatHeroX, L.floatY + 60, `+${e.amount} блок`, F.block);
+        this.floatWithIcon(L.floatHeroX, L.floatY + 60, `+${e.amount}`, F.block, statIconKey('block'), FEEL.float.size, 30, true);
         sfx(this, 'block');
         break;
       case 'enemyBlock':
-        this.floatText(L.floatEnemyX, L.floatY + 60, `+${e.amount} блок`, F.block);
+        this.floatWithIcon(L.floatEnemyX, L.floatY + 60, `+${e.amount}`, F.block, statIconKey('block'), FEEL.float.size, 30, true);
         sfx(this, 'block');
         break;
       case 'stun':
-        this.floatText(L.floatEnemyX, L.floatY + 60, `оглушён ${e.seconds} с`, F.block);
+        this.floatWithIcon(L.floatEnemyX, L.floatY + 60, `оглушён ${e.seconds} с`, F.block, statIconKey('stun'));
         sfx(this, 'stun');
         break;
       case 'buff':
-        this.floatText(L.floatHeroX, L.floatY + 60, `оружие ×${e.mult}`, C.accent);
+        this.floatWithIcon(L.floatHeroX, L.floatY + 60, `оружие ×${e.mult}`, C.accent, statIconKey('buff'));
         break;
       case 'steal':
         // Мешок не отбит: монеты уходят из кошелька сразу (пуст — из награды заказа).
         this.enemyView?.flash(e.uid);
         run.coins = Math.max(0, run.coins - e.wallet);
-        if (e.wallet) this.floatText(L.floatHeroX, L.floatY + 120, `−${e.wallet} мон.`, C.bad, 30);
-        if (e.reward) this.floatText(L.floatHeroX, L.floatY + 160, `−${e.reward} мон. из награды`, C.accent, 24);
+        if (e.wallet) this.floatWithIcon(L.floatHeroX, L.floatY + 120, `−${e.wallet}`, C.bad, uiIconKey('coin'), 30, 30, true);
+        if (e.reward) this.floatWithIcon(L.floatHeroX, L.floatY + 160, `−${e.reward} из награды`, C.accent, uiIconKey('coin'), 24, 26, true);
         sfx(this, 'item_vanish');
         break;
       case 'refund':
         run.coins += e.wallet;
-        this.floatText(L.floatHeroX, L.floatY + 120, `+${e.wallet + e.reward} мон. возвращено`, C.good, 28);
+        this.floatWithIcon(L.floatHeroX, L.floatY + 120, `+${e.wallet + e.reward} возвращено`, C.good, uiIconKey('coin'), 28, 28, true);
         break;
       case 'guardBroken':
-        this.floatText(L.floatEnemyX, L.floatY + 60, 'щит сбит!', C.good, 34);
+        this.floatWithIcon(L.floatEnemyX, L.floatY + 60, 'щит сбит!', C.good, statIconKey('block'), 34);
         sfx(this, 'block');
         break;
       case 'guardUp':
-        this.floatText(L.floatEnemyX, L.floatY + 60, 'щит поднят', C.dim, 26);
+        this.floatWithIcon(L.floatEnemyX, L.floatY + 60, 'щит поднят', C.dim, statIconKey('block'), 26);
         break;
       case 'ritual':
-        this.floatText(L.floatEnemyX, L.floatY + 60, e.broken ? 'ритуал сорван' : 'вода освящена!', e.broken ? C.good : C.bad, 30);
+        this.floatWithIcon(L.floatEnemyX, L.floatY + 60, e.broken ? 'ритуал сорван' : 'вода освящена!', e.broken ? C.good : C.bad, statIconKey('aura'), 30);
         break;
       case 'escaped':
         this.banner(`${e.name} сбежал`, C.bad, 0);
         break;
       case 'quen':
         this.setQuen(e.on);
-        this.floatText(L.floatEnemyX, L.floatY + 60, e.on ? 'Квен!' : 'Квен спал', e.on ? C.bad : C.good, 32);
+        this.floatWithIcon(L.floatEnemyX, L.floatY + 60, e.on ? 'Квен!' : 'Квен спал', e.on ? C.bad : C.good, statIconKey('block'), 32);
         break;
       case 'reflect':
-        this.floatText(L.floatEnemyX, L.floatY - 60, 'бомба вернулась!', C.good, 32);
+        this.floatWithIcon(L.floatEnemyX, L.floatY - 60, 'бомба вернулась!', C.good, tagKey('bomb'), 32);
         sfx(this, 'bomb');
         this.shake(FEEL.shake.explosionIntensity, FEEL.shake.explosionMs);
         break;
       case 'heroStun':
-        this.floatText(L.floatHeroX, L.floatY + 60, `оглушён ${e.seconds} с`, C.bad, 28);
+        this.floatWithIcon(L.floatHeroX, L.floatY + 60, `оглушён ${e.seconds} с`, C.bad, statIconKey('stun'), 28);
         sfx(this, 'bomb');
         this.shake(FEEL.shake.explosionIntensity, FEEL.shake.explosionMs);
         break;
       case 'telegraph':
-        this.telegraph(e.group, e.seconds);
+        // Крест проступает целиком; двойной удар копья — жёлтый отрезок с копьём.
+        if (e.kind === 'cross') this.telegraphCross(e.group, e.seconds);
+        else this.telegraph(e.group, e.seconds);
         break;
       case 'aim':
         this.spawnAim(e.id, e.seconds);
         break;
       // Соседство
       case 'burned':
-        this.floatText(L.centerX, L.itemNameY - 60, `${e.name}: ${e.reason.toLowerCase()}`, C.bad, 26);
+        this.floatWithIcon(L.centerX, L.itemNameY - 60, `${e.name}: ${e.reason.toLowerCase()}`, C.bad, statIconKey('damage'), 26);
         sfx(this, 'item_burn');
         break;
       case 'poisoned':
-        this.floatText(L.centerX, L.itemNameY - 60, `${e.name}: отравлена`, C.bad, 26);
+        this.floatWithIcon(L.centerX, L.itemNameY - 60, `${e.name}: отравлена`, C.bad, tagKey('oil'), 26);
         break;
       case 'explode':
         destroyItem(e.uid); // все заряды потеряны — предмет исчезает навсегда
         this.heroView.removePiece(e.uid);
-        this.floatText(L.centerX, L.itemNameY - 60, `Взрыв! ${e.name}`, C.bad, 32);
+        this.floatWithIcon(L.centerX, L.itemNameY - 60, `Взрыв! ${e.name}`, C.bad, tagKey('bomb'), 32);
         sfx(this, 'bomb');
         sfx(this, 'item_vanish');
         this.shake(FEEL.shake.explosionIntensity, FEEL.shake.explosionMs);
         break;
       case 'enabled':
-        this.floatText(L.centerX, L.itemNameY - 60, `${e.name} снова работает`, C.good, 26);
+        this.floatWithIcon(L.centerX, L.itemNameY - 60, `${e.name} снова работает`, C.good, statIconKey('charges'), 26);
         break;
       case 'bonusLost':
-        this.floatText(L.centerX, L.itemNameY - 60, `${e.name}: бонус соседа пропал`, C.dim, 24);
+        this.floatWithIcon(L.centerX, L.itemNameY - 60, `${e.name}: бонус соседа пропал`, C.dim, statIconKey('aura'), 24);
         break;
       // Условия заказчиков и модификаторы врагов
       case 'blocked':
-        this.floatText(L.centerX, L.itemNameY - 60, `${e.name}: ${e.reason}`, C.bad, 26);
+        this.floatWithIcon(L.centerX, L.itemNameY - 60, `${e.name}: ${e.reason}`, C.bad, statIconKey('noRetreat'), 26);
         sfx(this, 'item_burn');
         break;
       case 'windup':
@@ -1543,13 +1588,13 @@ export class BattleScene extends Phaser.Scene {
         this.resolveParryIcon(e.id, e.parried);
         break;
       case 'enemyMiss':
-        this.floatText(L.floatHeroX, L.floatY, 'промах!', C.dim, 34);
+        this.floatWithIcon(L.floatHeroX, L.floatY, 'промах!', C.dim, statIconKey('damage'), 34);
         break;
       case 'woke':
-        this.floatText(L.floatEnemyX, L.floatY + 60, `проснулся: быстрее на ${e.seconds} с`, C.bad, 26);
+        this.floatWithIcon(L.floatEnemyX, L.floatY + 60, `проснулся: быстрее на ${e.seconds} с`, C.bad, statIconKey('cooldown'), 26);
         break;
       case 'dodge':
-        this.floatText(L.floatEnemyX, L.floatY, `${e.name} уклонился`, C.accent, 34);
+        this.floatWithIcon(L.floatEnemyX, L.floatY, `${e.name} уклонился`, C.accent, statIconKey('parry'), 34);
         break;
     }
   }
@@ -1804,7 +1849,7 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  private floatText(x: number, y: number, str: string, color: string, size = FEEL.float.size): void {
+  private floatText(x: number, y: number, str: string, color: string, size = FEEL.float.size): Phaser.GameObjects.Text {
     const t = addText(this, x + Phaser.Math.Between(-40, 40), y, str, size, color, {
       fontStyle: 'bold',
       stroke: '#000',
@@ -1813,11 +1858,86 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(60);
     this.tweens.add({ targets: t, y: y - FEEL.float.rise, alpha: 0, duration: FEEL.float.durationMs, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+    return t;
+  }
+
+  /** Значок всплывает рядом с подписью и движется с ней. */
+  private floatWithIcon(
+    x: number,
+    y: number,
+    str: string,
+    color: string,
+    iconKey: string,
+    size = FEEL.float.size,
+    iconSize = 30,
+    iconAfter = false,
+  ): Phaser.GameObjects.Text {
+    const text = this.floatText(x, y, str, color, size);
+    const iconX = iconAfter
+      ? text.x + text.width / 2 + iconSize / 2 + 8
+      : text.x - text.width / 2 - iconSize / 2 - 8;
+    this.floatIcon(iconX, text.y, iconKey, iconSize);
+    return text;
+  }
+
+  private floatIcon(x: number, y: number, iconKey: string, size: number): void {
+    if (!this.textures.exists(iconKey)) return;
+    const icon = this.add.image(x, y, iconKey).setDisplaySize(size, size).setDepth(60);
+    this.tweens.add({ targets: icon, y: y - FEEL.float.rise, alpha: 0, duration: FEEL.float.durationMs, ease: 'Cubic.easeOut', onComplete: () => icon.destroy() });
+  }
+
+  /** Мечи для урона рисуются без круглого фона, чтобы заданный цвет оставался чистым. */
+  private swordGlyph(color: string): string {
+    const key = `battle_float_sword_${color.replace('#', '')}`;
+    if (!this.textures.exists(key)) {
+      const texture = this.textures.createCanvas(key, 64, 64);
+      if (texture) {
+        drawGlyph(texture.getContext(), 'sword', 32, 32, 54, color);
+        texture.refresh();
+      }
+    }
+    return key;
   }
 
   /** Цифра урона или лечения: цвет по типу, большие удары (от FEEL.float.bigHit) — крупнее. */
-  private floatNumber(x: number, str: string, color: string, amount: number): void {
-    this.floatText(x, L.floatY, str, color, amount >= FEEL.float.bigHit ? FEEL.float.bigSize : FEEL.float.size);
+  private floatNumber(x: number, str: string, color: string, amount: number, size?: number): Phaser.GameObjects.Text {
+    return this.floatText(x, L.floatY, str, color, size ?? (amount >= FEEL.float.bigHit ? FEEL.float.bigSize : FEEL.float.size));
+  }
+
+  /** Эффекты удара показываются рядом с цифрой, а не отдельными строками ниже неё. */
+  private floatNumberWithEffects(
+    x: number,
+    str: string,
+    color: string,
+    amount: number,
+    effects: string[],
+    iconKey?: string,
+    iconAfter = false,
+  ): void {
+    const largeSize = Math.max(56, amount >= FEEL.float.bigHit ? FEEL.float.bigSize : FEEL.float.size);
+    const number = this.floatNumber(x, str, color, amount, largeSize);
+    if (iconKey) {
+      const iconX = iconAfter
+        ? number.x + number.width / 2 + 22
+        : number.x - number.width / 2 - 22;
+      this.floatIcon(iconX, number.y, iconKey, 34);
+    }
+    if (!effects.length) return;
+    const labelY = L.floatY + 8;
+    const hasBlockEffect = effects.some((effect) => effect.startsWith('блок') || effect === 'в щит' || effect === 'пробой блока');
+    const iconSpace = iconKey && iconAfter ? 34 : 0;
+    const effectIconX = number.x + number.width / 2 + iconSpace + 23;
+    const labelX = number.x + number.width / 2 + 12 + iconSpace + (hasBlockEffect ? 26 : 0);
+    if (hasBlockEffect) this.floatIcon(effectIconX, labelY, statIconKey('block'), 22);
+    const label = this.add.text(labelX, labelY, effects.join(' · '), {
+      fontFamily: FONT,
+      fontSize: '24px',
+      color: C.dim,
+      fontStyle: 'bold',
+      stroke: '#000',
+      strokeThickness: 5,
+    }).setOrigin(0, 0.5).setDepth(60);
+    this.tweens.add({ targets: label, y: labelY - FEEL.float.rise, alpha: 0, duration: FEEL.float.durationMs, ease: 'Cubic.easeOut', onComplete: () => label.destroy() });
   }
 
   /** Вспышка и покачивание портрета при ударе. */
@@ -1851,8 +1971,9 @@ interface ParryIcon {
 }
 
 /**
- * Крест монаха: порядок точек — верх, низ, лево, право (доли FEEL.patterns.crossR от перекрестья). Верх короче низа —
- * поперечина в верхней части, как на церковном кресте.
+ * Крест: стороны в классическом порядке — верх, низ, лево, право (доли FEEL.patterns.crossR от перекрестья). Верх короче
+ * низа — поперечина в верхней части, как на церковном кресте. Так идёт первый крест каждого врага; дальше порядок
+ * появления кружков перемешивается (telegraphCross), а сам рисунок всегда тот же.
  */
 const CROSS_ORDER: [number, number][] = [
   [0, -0.7],

@@ -21,7 +21,9 @@ import { THANKS_NOTE, WITCHER_LETTER } from "../data/story";
 import {
   currentVisitor,
   decideVisitor,
+  canBeMain,
   heroLevel,
+  mainItem,
   markLetterRead,
   queueDone,
   resolveNight,
@@ -81,6 +83,7 @@ export class HomeScene extends Phaser.Scene {
   private card!: Phaser.GameObjects.Container;
   private board!: Phaser.GameObjects.Container;
   private hotspots: Hotspot[] = [];
+  private parryWarning: Phaser.GameObjects.Container | null = null;
 
   constructor() {
     super("Home");
@@ -96,6 +99,7 @@ export class HomeScene extends Phaser.Scene {
     const L = HOME_LAYOUT;
     this.portrait = null;
     this.hotspots = [];
+    this.parryWarning = null;
     this.cardReady = false;
     this.queueShown = false;
     this.stamping = false;
@@ -662,7 +666,7 @@ export class HomeScene extends Phaser.Scene {
         {
           icon: statIconKey("enemies"),
           value: `${c.enemies.length}`,
-          hint: `Количество врагов: 2 ${c.enemies.length}.`,
+          hint: `Количество врагов: ${c.enemies.length}.`,
         },
       ],
       { h: 34, container: this.card },
@@ -719,16 +723,16 @@ export class HomeScene extends Phaser.Scene {
       k.good,
       r.y + r.h - p.bottom - 80,
       adv
-        ? `Награда ${c.reward} монет — сразу, как только примешь заказ (аванс).`
-        : `Награда ${c.reward} монет за выполненный заказ.`,
+        ? "Аванс получишь при принятии заказа."
+        : "Получишь за выполнение заказа.",
       adv ? "сразу, авансом" : "",
     );
     money(
       "Неустойка:",
-      `${c.penalty}`,
+      `${c.penalty}/${Math.ceil(c.penalty / 2)}`,
       k.bad,
       r.y + r.h - p.bottom - 40,
-      `Неустойка ${c.penalty} монет — если погибнешь, не выполнив заказ; при отступлении — часть.${adv ? " И аванс придётся вернуть." : ""}`,
+      `Взимается, если погибнешь/сбежишь.${adv ? " Аванс придётся вернуть." : ""}`,
     );
     this.cardAreas = {
       head,
@@ -1011,14 +1015,14 @@ export class HomeScene extends Phaser.Scene {
               value: adv ? `+${c.reward} ✓` : `+${c.reward}`,
               color: adv ? C.dim : C.good,
               hint: adv
-                ? `Награда ${c.reward} монет — уже получена авансом.`
-                : `Награда ${c.reward} монет за выполненный заказ.`,
+                ? "Аванс уже получен при принятии заказа."
+                : "Получишь за выполнение заказа.",
             },
             {
               icon: coinIconKey(this),
-              value: `−${c.penalty}`,
+              value: `−${c.penalty}/−${Math.ceil(c.penalty / 2)}`,
               color: C.bad,
-              hint: `Неустойка ${c.penalty} монет — если погибнешь, не выполнив заказ; при отступлении — часть.${adv ? " И аванс придётся вернуть." : ""}`,
+              hint: `Взимается, если погибнешь/сбежишь.${adv ? " Аванс придётся вернуть." : ""}`,
             },
           ],
           rowH,
@@ -1130,8 +1134,13 @@ export class HomeScene extends Phaser.Scene {
     for (const h of this.hotspots) h.setEnabled(v);
   }
 
-  private leaveHouse(): void {
+  private leaveHouse(skipParryWarning = false): void {
     if (this.leaving) return;
+    const main = mainItem();
+    if (!skipParryWarning && run.accepted.length > 0 && (!main || !canBeMain(main))) {
+      this.showParryWarning();
+      return;
+    }
     sfx(this, "door_open");
     tutorialDone(this, "door");
     if (run.accepted.length > 0) {
@@ -1149,5 +1158,52 @@ export class HomeScene extends Phaser.Scene {
       resolveNight({ kind: "skip", defeated: 0, stolen: [] });
       goto(this, "Results");
     }
+  }
+
+  private showParryWarning(): void {
+    if (this.parryWarning) return;
+    const overlay = this.add.container(0, 0).setDepth(100);
+    overlay.add(
+      this.add.rectangle(0, 0, W, H, 0x000000, 0.68)
+        .setOrigin(0)
+        .setInteractive(),
+    );
+    overlay.add(
+      this.add.rectangle(W / 2, H / 2, 760, 350, 0x211b1a, 0.98)
+        .setStrokeStyle(3, C.border),
+    );
+    overlay.add(
+      addText(this, W / 2, H / 2 - 105, "Нечем отбивать атаки", 38, C.bad, TITLE)
+        .setOrigin(0.5),
+    );
+    overlay.add(
+      addText(
+        this,
+        W / 2,
+        H / 2 - 35,
+        "Основное оружие не выбрано. В бою не получится парировать атаки.",
+        25,
+        C.text,
+        { align: "center", wordWrap: { width: 650 } },
+      ).setOrigin(0.5),
+    );
+    overlay.add(
+      new Button(this, W / 2 - 180, H / 2 + 105, 320, 76, "Всё равно на охоту", () => {
+        this.closeParryWarning();
+        this.leaveHouse(true);
+      }, 25),
+    );
+    overlay.add(
+      new Button(this, W / 2 + 180, H / 2 + 105, 250, 76, "В сумки", () => {
+        this.closeParryWarning();
+        goto(this, "Backpack");
+      }, 25),
+    );
+    this.parryWarning = overlay;
+  }
+
+  private closeParryWarning(): void {
+    this.parryWarning?.destroy();
+    this.parryWarning = null;
   }
 }

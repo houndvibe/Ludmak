@@ -170,11 +170,19 @@ export class Button extends Phaser.GameObjects.Container {
         .setScale(k);
       this.add(this.plate);
     }
-    this.label = addText(scene, 0, 0, text, size, art ? MENU_ART.textColor : C.text, {
-      ...TITLE,
-      stroke: "#000000",
-      strokeThickness: art ? 2 : 0,
-    }).setOrigin(0.5);
+    this.label = addText(
+      scene,
+      0,
+      0,
+      text,
+      size,
+      art ? MENU_ART.textColor : C.text,
+      {
+        ...TITLE,
+        stroke: "#000000",
+        strokeThickness: art ? 2 : 0,
+      },
+    ).setOrigin(0.5);
     this.add(this.label);
     this.showState();
     this.bg.setInteractive({ useHandCursor: true });
@@ -207,20 +215,12 @@ export class Button extends Phaser.GameObjects.Container {
     if (this.plate) {
       this.plate.setAlpha(this.enabled ? 1 : 0.5);
       this.label?.setColor(
-        this.enabled
-          ? this.hovered
-            ? "#ff6a7e"
-            : MENU_ART.textColor
-          : C.dim,
+        this.enabled ? (this.hovered ? "#ff6a7e" : MENU_ART.textColor) : C.dim,
       );
       this.setScale(this.enabled && this.hovered ? 1.04 : 1);
     } else {
       this.bg.setFillStyle(
-        !this.enabled
-          ? C.btnOff
-          : this.hovered
-            ? C.btnHover
-            : C.btn,
+        !this.enabled ? C.btnOff : this.hovered ? C.btnHover : C.btn,
       );
     }
   }
@@ -540,7 +540,9 @@ const PARRY_PERK_TEXT: Record<ParryPerkId, string> = {
 export function parryInfo(id: ItemId): { cut: number; effect: string } | null {
   const perk = ITEMS[id].parryPerk;
   if (!perk) return null;
-  const cut = Math.round((1 - (perk === "shield" ? PARRY_PERK.shieldMult : PARRY_DAMAGE_MULT)) * 100);
+  const cut = Math.round(
+    (1 - (perk === "shield" ? PARRY_PERK.shieldMult : PARRY_DAMAGE_MULT)) * 100,
+  );
   return { cut, effect: perk === "sword" ? "нет" : PARRY_PERK_TEXT[perk] };
 }
 
@@ -988,7 +990,7 @@ export function conditionChips(
       icon: coinIconKey(scene),
       value: `${fmtMult(PARRY_REWARD_MULT)} за ${Math.round(PARRY_REWARD_SHARE * 100)}%`,
       color: C.good,
-      hint: `Отбей (парируй) ${Math.round(PARRY_REWARD_SHARE * 100)}% атак врагов этого заказа и больше — награда ${fmtMult(PARRY_REWARD_MULT)}.`,
+      hint: `Прируй ${Math.round(PARRY_REWARD_SHARE * 100)}% и больше атак — награда ${fmtMult(PARRY_REWARD_MULT)}.`,
     });
   }
   if (battleOnly) return out;
@@ -1005,14 +1007,14 @@ export function conditionChips(
       icon: coinIconKey(scene),
       value: fmtMult(reward),
       color: reward >= 1 ? C.good : C.bad,
-      hint: `Награда ${fmtMult(reward)}.`,
+      hint: "Получишь за выполнение заказа.",
     });
   if (penalty && !c.advance)
     out.push({
       icon: coinIconKey(scene),
       value: fmtMult(penalty),
       color: C.bad,
-      hint: `Неустойка ${fmtMult(penalty)}.`,
+      hint: "Взимается, если погибнешь/сбежишь.",
     });
   return out;
 }

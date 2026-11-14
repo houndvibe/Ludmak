@@ -35,6 +35,8 @@ export interface ItemPower {
   /** Шанс взрыва в начале боя (0 — не взорвётся) и урон герою от взрыва. */
   explodeChance: number;
   explodeDamage: number;
+  /** Шанс обойти запас блока врага при ударе оружием. */
+  blockPierceChance: number;
   /** Сила ауры амулета: 1 + усиления от соседей. */
   aura: number;
   /** Эффекты, которые получил этот предмет. */
@@ -179,6 +181,7 @@ export function computePower(allItems: OwnedItem[], blocked?: BlockRule): PowerR
       poisoned: false,
       explodeChance: 0,
       explodeDamage: 0,
+      blockPierceChance: 0,
       aura: 1,
       received: [],
     });
@@ -254,15 +257,15 @@ export function computePower(allItems: OwnedItem[], blocked?: BlockRule): PowerR
       p.final[k] = Math.max(0, p.base[k]! * (1 + bonus));
     }
   }
-  // 4а. Прибавка единицами урона (оружие к оружию): сумма от каждого соседа, поверх процентов.
+  // 4а. Пробой блока: шанс оружия растёт на долю за каждого соседа-оружие, максимум 100%.
   for (const rule of SYNERGIES) {
     const ef = rule.effect;
-    if (ef.kind !== 'flat') continue;
+    if (ef.kind !== 'blockPierce') continue;
     for (const [s, t] of pairs(rule, false)) {
       const p = powers.get(t.uid)!;
       if (!p.base.damage) continue;
-      p.final.damage = (p.final.damage ?? 0) + ef.amount;
-      add(rule, s.uid, t.uid, `+${ef.amount} урон`, true);
+      p.blockPierceChance = Math.min(1, p.blockPierceChance + ef.chance);
+      add(rule, s.uid, t.uid, `+${Math.round(ef.chance * 100)}% шанс пробить блок`, true);
     }
   }
   // 4. Замедление от соседей (клинки мешают друг другу): к перезарядке цели — сумма от каждого соседа.

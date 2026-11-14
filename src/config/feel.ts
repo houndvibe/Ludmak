@@ -167,8 +167,8 @@ export const FEEL = {
     sackLineAlpha: 0.6,
     sackLineWidth: 4,
     crossR: 150,
-    /** Крест: отрезок от центра к каждому кружку вырастает за crossArmMs; цвет, прозрачность, толщина. */
-    crossArmMs: 180,
+    /** Крест: весь рисунок проступает за столько секунд до первого кружка серии; цвет, прозрачность, толщина. */
+    crossTelegraph: 0.3,
     crossLineColor: 0xe0b65a,
     crossLineAlpha: 0.5,
     crossLineWidth: 5,

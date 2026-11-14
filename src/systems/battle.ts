@@ -121,7 +121,7 @@ export type BattleEvent =
   | { type: 'enemyItem'; uid: number; name: string }
   | { type: 'enemyCharge'; uid: number; left: number }
   /** halved — урон срезан модификатором врага (кольчуга, набожный); guarded — ростовым щитом; quen — поглощён Квеном. */
-  | { type: 'enemyHit'; taken: number; absorbed: number; buffed: boolean; firstStrike: boolean; halved: boolean; guarded: boolean; quen: boolean; item: ItemId | null }
+  | { type: 'enemyHit'; taken: number; absorbed: number; buffed: boolean; firstStrike: boolean; halved: boolean; guarded: boolean; quen: boolean; pierced: boolean; item: ItemId | null }
   | { type: 'heroHit'; taken: number; absorbed: number; self: boolean }
   | { type: 'heroHeal'; amount: number }
   | { type: 'enemyHeal'; amount: number }
@@ -158,8 +158,8 @@ export type BattleEvent =
   | { type: 'heroStun'; seconds: number }
   // Парирование: прицел (до выстрела), замах атаки врага (появилась картинка) и удар (окно закрылось или игрок парировал)
   | { type: 'aim'; id: number; item: EnemyItemId; seconds: number }
-  /** Двойной удар копья: отрезок серии group проявляется за seconds до первого удара. */
-  | { type: 'telegraph'; group: number; seconds: number }
+  /** Рисунок серии group проявляется за seconds до первого удара: копьё — жёлтый отрезок, крест (kind 'cross') — весь крест. */
+  | { type: 'telegraph'; group: number; seconds: number; kind?: AttackKind }
   | { type: 'windup'; id: number; uid: number; item: EnemyItemId; kind: AttackKind; group: number | null; index: number; from: number | null; partner: number | null }
   | { type: 'strike'; id: number; parried: boolean };
 
@@ -261,6 +261,8 @@ export class BattleSim {
   readonly clients: ClientId[];
   readonly night: number;
   private rng: Rng;
+  /** Детерминированный пятиударный цикл шанса пробить блок для каждого предмета. */
+  private blockPierceAttacks = new Map<number, number>();
 
   /** Здоровье героя в эту ночь (растёт с уровнем). */
   readonly heroMaxHp: number;
@@ -670,7 +672,7 @@ export class BattleSim {
       const mult = this.weaponBuff.mult;
       const resist = this.resistMult(main.def);
       this.events.push({ type: 'heroItem', uid: main.item.uid, name: main.def.name, active: false });
-      this.damageEnemy(Math.round(main.stats.damage * PARRY_PERK.daggerMult * mult * resist), mult > 1, resist < 1, main.def.id);
+      this.damageEnemy(Math.round(main.stats.damage * PARRY_PERK.daggerMult * mult * resist), mult > 1, resist < 1, main.def.id, main.item.uid);
     } else if (perk === 'torch') {
       const e = this.enemy;
       e.torchSlow = Math.min(PARRY_PERK.torchSlowMax, Math.round((e.torchSlow + PARRY_PERK.torchSlow) * 10) / 10);
@@ -722,7 +724,7 @@ export class BattleSim {
     if (s.damage) {
       const mult = (def.category === 'weapon' ? this.weaponBuff.mult : 1) * extraMult;
       const resist = this.resistMult(def);
-      this.damageEnemy(Math.round(s.damage * mult * resist), mult > 1, resist < 1, def.id);
+      this.damageEnemy(Math.round(s.damage * mult * resist), mult > 1, resist < 1, def.id, slot.item.uid);
     }
     if (s.heal) {
       if (slot.poisoned) {
@@ -766,7 +768,7 @@ export class BattleSim {
     return m;
   }
 
-  private damageEnemy(dmg: number, buffed: boolean, halved: boolean, item: ItemId | null): void {
+  private damageEnemy(dmg: number, buffed: boolean, halved: boolean, item: ItemId | null, itemUid?: number): void {
     const e = this.enemy;
     // Призрак: первый удар героя по каждому врагу его заказа — усиленный.
     const firstStrike = !e.hitOnce && !!this.condition.firstHitBonus;
@@ -783,11 +785,16 @@ export class BattleSim {
         guarded = true;
       }
     }
-    const absorbed = Math.min(e.block, dmg);
+    const chance = itemUid === undefined ? 0 : this.powers.get(itemUid)?.blockPierceChance ?? 0;
+    const attackNo = itemUid === undefined ? 0 : this.blockPierceAttacks.get(itemUid) ?? 0;
+    if (itemUid !== undefined) this.blockPierceAttacks.set(itemUid, attackNo + 1);
+    const roll = itemUid === undefined ? 0 : (attackNo + itemUid % 5) % 5;
+    const pierced = e.block > 0 && chance > 0 && roll < Math.round(chance * 5);
+    const absorbed = pierced ? 0 : Math.min(e.block, dmg);
     e.block -= absorbed;
     const taken = dmg - absorbed;
     e.hp = Math.max(0, e.hp - taken);
-    this.events.push({ type: 'enemyHit', taken, absorbed, buffed, firstStrike, halved, guarded, quen, item });
+    this.events.push({ type: 'enemyHit', taken, absorbed, buffed, firstStrike, halved, guarded, quen, pierced, item });
     // Разбойник: здоровье упало ниже порога — кружок бегства (один раз за бой).
     if (ENEMIES[e.id].escape && !e.escapeTried && e.hp > 0 && e.hp < e.maxHp * ENEMY_PATTERN.escapeBelow) {
       e.escapeTried = true;
@@ -838,7 +845,10 @@ export class BattleSim {
         // Двойной удар копья: сначала проявляется отрезок (lead), удары — после.
         const lead = pat === 'double' ? s.lead ?? 0 : 0;
         if (pat === 'double') this.events.push({ type: 'telegraph', group, seconds: lead });
-        for (let i = 0; i < s.series!; i++) this.addPending(slot, pat, W, lead + i * (s.seriesStep ?? 0), group, i);
+        // Крест: весь рисунок проступает до первого кружка серии (порядок сторон выбирает сцена).
+        const tele = pat === 'cross' ? P.crossTelegraph : 0;
+        if (pat === 'cross') this.events.push({ type: 'telegraph', group, seconds: tele, kind: 'cross' });
+        for (let i = 0; i < s.series!; i++) this.addPending(slot, pat, W, lead + tele + i * (s.seriesStep ?? 0), group, i);
       } else if (pat === 'aim') {
         const p = this.addPending(slot, 'aim', W * P.aimWindow, s.aim ?? 0);
         this.events.push({ type: 'aim', id: p.id, item: slot.def.id, seconds: s.aim ?? 0 });
@@ -977,7 +987,7 @@ export class BattleSim {
       const dmg = Math.round((s.damage ?? 0) * e.power);
       e.hp = Math.max(0, e.hp - dmg);
       this.events.push({ type: 'reflect', damage: dmg });
-      this.events.push({ type: 'enemyHit', taken: dmg, absorbed: 0, buffed: false, firstStrike: false, halved: false, guarded: false, quen: false, item: null });
+      this.events.push({ type: 'enemyHit', taken: dmg, absorbed: 0, buffed: false, firstStrike: false, halved: false, guarded: false, quen: false, pierced: false, item: null });
       return;
     }
     if (e.mod === 'drunk' && this.rng() < MODIFIER_STATS.drunkMiss) {
@@ -987,6 +997,14 @@ export class BattleSim {
     }
     const dmg = (s.damage ?? 0) * p.mult * e.power * enemyDamageMult(e.mod) * (s.monsterMult ?? 1) * (parried ? parryMult : 1);
     this.damageHero(Math.round(dmg));
+    // Монах получает 5 очков блока за каждый пропущенный кружок креста.
+    if (p.kind === 'cross' && ENEMIES[e.id].ritual && !parried) {
+      const amount = Math.min(5, ENEMY_BLOCK_MAX - e.block);
+      if (amount > 0) {
+        e.block += amount;
+        this.events.push({ type: 'enemyBlock', amount });
+      }
+    }
     if (p.kind === 'reflect') {
       // Бомба не отбита: герой оглушён — активные предметы не нажимаются.
       this.heroStun = Math.max(this.heroStun, ENEMY_PATTERN.bombStun);

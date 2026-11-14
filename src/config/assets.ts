@@ -190,8 +190,7 @@ export const UI_HEADER_KEY = "ui_header_band";
 export const ICON_LINK_KEY = "icon_link";
 
 /**
- * Раскладка экрана дома в координатах 1920×1080 — под рисунок backgrounds/home.webp (1717×916, растягивается по высоте
- * на 1080 и обрезается по бокам на ~52 px: X = x·1,179 − 52, Y = y·1,179 в пикселях картинки).
+ * Раскладка экрана дома в координатах 1920×1080 — под backgrounds/home_sketch_3.jpg (2560×1440, масштаб 0,75).
  * Если художница нарисовала дверь/сундук/сумки в другом месте — поправьте числа здесь, код трогать не нужно.
  * Прямоугольники: x, y — левый верхний угол.
  */
@@ -630,7 +629,7 @@ export const ASSET_MANIFEST: AssetEntry[] = [
     stub: { kind: "category", category: id } as StubSpec,
   })),
   { key: ICON_LINK_KEY, path: "icons/link.png", stub: { kind: "link" } },
-  { key: BG_HOME_KEY, path: "backgrounds/home.webp", stub: { kind: "home" } }, // вариант фона — backgrounds/home_v2.webp (раскладка не подогнана)
+  { key: BG_HOME_KEY, path: "backgrounds/home_sketch_3.jpg", stub: { kind: "home" } },
   {
     key: BG_RESULTS_KEY,
     path: "backgrounds/results.webp",
