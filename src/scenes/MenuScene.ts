@@ -1,4 +1,4 @@
-// Главное меню по макету художницы: лес, по центру логотип, под ним «НАЧАТЬ ОХОТУ» и «ПРОПУСТИТЬ ОБУЧЕНИЕ»,
+// Главное меню по макету художницы: лес, по центру логотип, под ним «НАЧАТЬ ОХОТУ» и «БЫСТРЫЙ БОЙ»,
 // справа внизу — громкость. Раскладка — MENU_LAYOUT, картинки — MENU_ART.
 import * as Phaser from "phaser";
 import {
@@ -14,14 +14,7 @@ import { ENEMIES, ENEMY_IDS } from "../data/enemies";
 import { NIGHTS } from "../config/balance";
 import { FEEL } from "../config/feel";
 import { playMusic, sfx } from "../components/Sound";
-import { TUTORIAL_ALWAYS } from "../data/tutorial";
-import {
-  isSlowCircles,
-  isTutorialDone,
-  newQuickFight,
-  newRun,
-  setSlowCircles,
-} from "../state";
+import { isSlowCircles, newQuickFight, newRun, setSlowCircles } from "../state";
 import {
   addBackground,
   addText,
@@ -68,9 +61,6 @@ export class MenuScene extends Phaser.Scene {
     addBackground(this, BG_MENU_KEY);
     this.addAmbience();
 
-    // Пока обучение не пройдено (или на время разработки, TUTORIAL_ALWAYS), «Начать охоту» начинается с обучающей ночи;
-    // её можно пропустить.
-    const tutorial = TUTORIAL_ALWAYS || !isTutorialDone();
     const L = MENU_LAYOUT;
     // Дебаг (галочка): обучение пропускается, 999 монет, в магазине все предметы.
     this.debug = loadDebug();
@@ -97,12 +87,8 @@ export class MenuScene extends Phaser.Scene {
       ).setOrigin(0.5);
     }
     this.menuButton(L.start, "НАЧАТЬ ОХОТУ", MENU_ART.startFont, () =>
-      start(tutorial),
+      this.openTutorialPrompt(start),
     );
-    if (tutorial)
-      this.menuButton(L.skipTutorial, "ПРОПУСТИТЬ ОБУЧЕНИЕ", 26, () =>
-        start(false),
-      );
     this.menuButton(L.quickFight, "БЫСТРЫЙ БОЙ", 26, () =>
       this.openQuickFight(),
     );
@@ -142,26 +128,23 @@ export class MenuScene extends Phaser.Scene {
         s,
       )
       .setScale(k);
-    const label = addText(
-      this,
-      0,
-      0,
-      text,
-      size,
-      MENU_ART.textColor,
-      TITLE,
-    ).setOrigin(0.5);
+    const label = addText(this, 0, 0, text, size, MENU_ART.buttonTextColor, {
+      ...TITLE,
+      stroke: "#000000",
+      strokeThickness: 3,
+    })
+      .setOrigin(0.5)
+      .setShadow(0, 3, "#000000", 0, true, true);
     const hit = this.add
       .rectangle(0, 0, r.w, r.h, 0xffffff, 0.001)
       .setInteractive({ useHandCursor: true });
     cont.add([plate, label, hit]);
     hit.on("pointerover", () => {
       sfx(this, "ui_hover");
-      label.setColor("#ff6a7e");
       this.tweens.add({ targets: cont, scale: 1.04, duration: 100 });
     });
     hit.on("pointerout", () => {
-      label.setColor(MENU_ART.textColor);
+      label.setColor(MENU_ART.buttonTextColor);
       this.tweens.add({ targets: cont, scale: 1, duration: 100 });
     });
     hit.on("pointerdown", (p: Phaser.Input.Pointer) => {
@@ -382,6 +365,55 @@ export class MenuScene extends Phaser.Scene {
         },
       });
     });
+  }
+
+  /** Перед новым забегом игрок сам выбирает, начинать ли с обучающей ночи. */
+  private openTutorialPrompt(onStart: (withTutorial: boolean) => void): void {
+    const box = this.add.container(0, 0).setDepth(100);
+    box.add(
+      this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.65).setInteractive(),
+    );
+    box.add(
+      this.add
+        .rectangle(W / 2, H / 2, 620, 300, 0x0c0a10, 0.97)
+        .setStrokeStyle(2, C.border),
+    );
+    box.add(
+      addText(
+        this,
+        W / 2,
+        H / 2 - 55,
+        "Пройти Обучение?",
+        42,
+        MENU_ART.textColor,
+        TITLE,
+      ).setOrigin(0.5),
+    );
+    box.add(
+      new Button(
+        this,
+        W / 2 - 140,
+        H / 2 + 65,
+        220,
+        70,
+        "Да",
+        () => onStart(true),
+        30,
+      ),
+    );
+    box.add(
+      new Button(
+        this,
+        W / 2 + 140,
+        H / 2 + 65,
+        220,
+        70,
+        "Нет",
+        () => onStart(false),
+        30,
+        "refuse",
+      ),
+    );
   }
 
   /** Выбранная ночь быстрого боя (запоминается, пока открыто меню). */

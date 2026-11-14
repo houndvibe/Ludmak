@@ -12,7 +12,6 @@ import {
   PARRY_REWARD_MULT,
   PARRY_REWARD_SHARE,
   SHIELD_SLOW_BY_STAR,
-  START_LIVES,
   type ItemStats,
 } from "./config/balance";
 import {
@@ -123,6 +122,8 @@ export function addText(
   });
 }
 
+export type ButtonTone = "confirm" | "refuse";
+
 /** Кнопка интерфейса с общей рамкой из главного меню. */
 export class Button extends Phaser.GameObjects.Container {
   private bg: Phaser.GameObjects.Rectangle;
@@ -130,6 +131,7 @@ export class Button extends Phaser.GameObjects.Container {
   private label: Phaser.GameObjects.Text;
   private enabled = true;
   private hovered = false;
+  private tone: ButtonTone;
 
   constructor(
     scene: Phaser.Scene,
@@ -140,8 +142,10 @@ export class Button extends Phaser.GameObjects.Container {
     text: string,
     onClick: () => void,
     size = 28,
+    tone: ButtonTone = "confirm",
   ) {
     super(scene, x, y);
+    this.tone = tone;
     const art = scene.textures.exists(menuArtKey("button"));
     // Без картинки — видимый прямоугольник; с картинкой — невидимая зона нажатия под плашками.
     this.bg = art
@@ -176,13 +180,14 @@ export class Button extends Phaser.GameObjects.Container {
       0,
       text,
       size,
-      art ? MENU_ART.textColor : C.text,
+      art ? this.baseColor() : C.text,
       {
         ...TITLE,
         stroke: "#000000",
-        strokeThickness: art ? 2 : 0,
+        strokeThickness: art ? 3 : 0,
       },
     ).setOrigin(0.5);
+    if (art) this.label.setShadow(0, 2, "#000000", 0, true, true);
     this.add(this.label);
     this.showState();
     this.bg.setInteractive({ useHandCursor: true });
@@ -203,9 +208,15 @@ export class Button extends Phaser.GameObjects.Container {
     scene.add.existing(this);
   }
 
+  private baseColor(): string {
+    return this.tone === "refuse"
+      ? MENU_ART.buttonRefuseTextColor
+      : MENU_ART.buttonTextColor;
+  }
+
   setEnabled(v: boolean): this {
     this.enabled = v;
-    this.label.setColor(v ? (this.plate ? MENU_ART.textColor : C.text) : C.dim);
+    this.label.setColor(v ? (this.plate ? this.baseColor() : C.text) : C.dim);
     this.showState();
     return this;
   }
@@ -214,9 +225,7 @@ export class Button extends Phaser.GameObjects.Container {
   private showState(): void {
     if (this.plate) {
       this.plate.setAlpha(this.enabled ? 1 : 0.5);
-      this.label?.setColor(
-        this.enabled ? (this.hovered ? "#ff6a7e" : MENU_ART.textColor) : C.dim,
-      );
+      this.label?.setColor(this.enabled ? this.baseColor() : C.dim);
       this.setScale(this.enabled && this.hovered ? 1.04 : 1);
     } else {
       this.bg.setFillStyle(
@@ -412,65 +421,15 @@ export function addHorse(
     .setScale(k);
 }
 
-/** Жизни сердечками: ♥ — есть, ♡ — потеряна. */
-export function livesText(lives = run.lives): string {
-  return (
-    "♥".repeat(Math.max(0, lives)) +
-    "♡".repeat(Math.max(0, START_LIVES - lives))
-  );
-}
-
-/** Размеры значков в шапке (px). */
-const HEART_PX = 46;
+/** Размер значка монеты в шапке (px). */
 const COIN_PX = 38;
 
-/**
- * Жизни у правого края (x — правый край, y — центр): картинки целого и разбитого сердца художницы,
- * без картинок — текстом ♥♡. Возвращает ширину и обновление.
- */
-export function addLives(
-  scene: Phaser.Scene,
-  x: number,
-  y: number,
-): { width: () => number; refresh: () => void } {
-  if (!scene.textures.exists(uiIconKey("heart_full"))) {
-    const t = addText(scene, x, y, livesText(), 34, C.bad, {
-      fontStyle: "bold",
-    }).setOrigin(1, 0.5);
-    return { width: () => t.width, refresh: () => t.setText(livesText()) };
-  }
-  const gap = 6;
-  const hearts: Phaser.GameObjects.Image[] = [];
-  for (let i = 0; i < START_LIVES; i++) {
-    // Слева направо: сначала целые, потом разбитые (как ♥♥♡).
-    const cx = x - (START_LIVES - 1 - i) * (HEART_PX + gap) - HEART_PX / 2;
-    hearts.push(scene.add.image(cx, y, uiIconKey("heart_full")));
-  }
-  const refresh = () =>
-    hearts.forEach((h, i) => {
-      const broken =
-        i >= run.lives && scene.textures.exists(uiIconKey("heart_broken"));
-      h.setTexture(uiIconKey(broken ? "heart_broken" : "heart_full"));
-      h.setScale(HEART_PX / h.height);
-      h.setAlpha(i >= run.lives && !broken ? 0.3 : 1);
-    });
-  refresh();
-  return {
-    width: () => START_LIVES * HEART_PX + (START_LIVES - 1) * gap,
-    refresh,
-  };
-}
-
-/**
- * Жизни у правого края полосы (x — правый край, y — центр) и монеты левее: значок монеты и число
- * (без картинки — «Монеты: N»). Возвращает функцию обновления (монеты меняются, например, от аванса Кикиморы).
- */
+/** Монеты у правого края шапки; возвращает обновление (монеты меняются, например, от аванса Кикиморы). */
 export function addCoinsAndLives(
   scene: Phaser.Scene,
   x: number,
   y: number,
 ): () => void {
-  const lives = addLives(scene, x, y);
   const art = scene.textures.exists(uiIconKey("coin"));
   const coins = addText(
     scene,
@@ -484,10 +443,7 @@ export function addCoinsAndLives(
   const icon = art ? scene.add.image(0, y, uiIconKey("coin")) : null;
   icon?.setScale(COIN_PX / icon.height);
   const refresh = () => {
-    lives.refresh();
-    coins
-      .setText(art ? `${run.coins}` : `Монеты: ${run.coins}`)
-      .setX(x - lives.width() - 30);
+    coins.setText(art ? `${run.coins}` : `Монеты: ${run.coins}`).setX(x);
     icon?.setX(coins.x - coins.width - 8 - COIN_PX / 2);
   };
   refresh();
@@ -507,7 +463,7 @@ export function addTopBar(scene: Phaser.Scene): void {
   }
 }
 
-/** Верхняя полоса: ночь, заголовок, монеты и жизни. Возвращает обновление монет и жизней. */
+/** Верхняя полоса: ночь, заголовок и монеты. Возвращает обновление монет. */
 export function addHeader(scene: Phaser.Scene, title: string): () => void {
   addTopBar(scene);
   addText(
@@ -1014,7 +970,7 @@ export function conditionChips(
       icon: coinIconKey(scene),
       value: fmtMult(penalty),
       color: C.bad,
-      hint: "Взимается, если погибнешь/сбежишь.",
+      hint: "Взимается только за невыполненную часть заказа при отступлении.",
     });
   return out;
 }

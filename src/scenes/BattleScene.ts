@@ -33,7 +33,6 @@ import {
   FONT,
   goto,
   W,
-  addLives,
   addChips,
   type UiChip,
   itemRarityFrame,
@@ -58,6 +57,8 @@ export class BattleScene extends Phaser.Scene {
   private sim!: BattleSim;
   private speed = 1;
   private shownStatus: BattleSim['status'] = 'fight';
+  /** Итог дня уже вызван: повторные нажатия (в т.ч. дебаг-кнопка) не создают второй переход. */
+  private finished = false;
 
   private heroView!: GridView<OwnedItem>;
   private enemyView: GridView<EnemySlot> | null = null;
@@ -144,6 +145,7 @@ export class BattleScene extends Phaser.Scene {
       : new BattleSim({ items, chain: dayChain(), clients: run.accepted.map((c) => c.client), night: run.night, mainUid, coins: run.coins });
     this.speed = 1;
     this.shownStatus = 'fight';
+    this.finished = false;
     this.overlay = null;
     this.enemyView = null;
     this.modBadge = null;
@@ -173,7 +175,6 @@ export class BattleScene extends Phaser.Scene {
     addTopBar(this);
     addText(this, 30, 40, `Ночь ${run.night}`, 30).setOrigin(0, 0.5);
     this.progressText = addText(this, W / 2, 40, '', 30).setOrigin(0.5);
-    addLives(this, W - 30, 40);
     // Условие заказчика текущего врага: меняется вместе с заказом.
     this.conditionText = addText(this, L.conditionBanner.x, L.conditionBanner.y, '', 24, C.accent, {
       fontStyle: 'bold',
@@ -186,6 +187,10 @@ export class BattleScene extends Phaser.Scene {
       this.speed = this.speed === 1 ? BATTLE_FAST_SPEED : 1;
       speedBtn.setLabel(`Ускорение ×${this.speed}`);
     }, 22);
+    if (run.debug) {
+      const win = L.debugWin;
+      new Button(this, win.x, win.y, win.w, win.h, 'Победить', () => this.debugWin(), 22);
+    }
     // Подсказка растёт вверх от нижнего края (над строкой подсказок обучения), в промежутке между сетками.
     this.info = addText(this, L.centerX, L.infoBottom, '', 22, C.text, {
       align: 'center',
@@ -1693,7 +1698,7 @@ export class BattleScene extends Phaser.Scene {
       this.closeOverlay();
       sfx(this, 'retreat');
       this.finish({ kind: 'retreat', defeated, stolen: sim.stolen, parryGoals: sim.parryGoals, heroHp: sim.heroHp }, 'Людьмак отступил');
-    }, 30).setEnabled(!blockedBy);
+    }, 30, 'refuse').setEnabled(!blockedBy);
     box.add(retreat);
     if (blockedBy) {
       const c = CLIENTS[blockedBy];
@@ -1707,24 +1712,38 @@ export class BattleScene extends Phaser.Scene {
     this.overlay = null;
   }
 
-  /**
-   * Конец боя с финальным боссом: победа — победа в игре; поражение — −1 жизнь и бой заново с полным здоровьем,
-   * пока есть жизни, иначе конец игры.
-   */
+  /** Дебаг-кнопка «Победить»: засчитывает весь день победой; финальный босс завершает забег как обычная победа. */
+  private debugWin(): void {
+    if (this.final) this.finishFinal(true);
+    else {
+      this.finish({
+        kind: 'win',
+        defeated: this.sim.chain.length,
+        stolen: this.sim.stolen,
+        parryGoals: this.sim.parryGoals,
+        heroHp: this.sim.heroHp,
+      }, 'Все заказы выполнены');
+    }
+  }
+
+  /** Конец боя с финальным боссом: победа — эпилог дома, поражение — конец забега без повторной попытки. */
   private finishFinal(won: boolean): void {
+    if (this.finished) return;
+    this.finished = true;
     this.refresh();
     if (run.quickFight) return this.finishQuick(won ? 'Ведьмак повержен' : 'Людьмак пал в бою');
-    const again = resolveFinal(won);
+    resolveFinal(won);
     const name = ENEMIES[this.sim.enemy.id].name.toLowerCase();
-    const message = won ? `${name[0].toUpperCase()}${name.slice(1)} повержен` : again ? 'Людьмак пал — ещё одна попытка' : 'Людьмак пал в бою';
+    const message = won ? `${name[0].toUpperCase()}${name.slice(1)} повержен` : 'Людьмак пал в бою';
     addText(this, L.centerX, 640, message, 60, won ? C.good : C.accent, { ...TITLE, stroke: '#000', strokeThickness: 8 })
       .setOrigin(0.5)
       .setDepth(90);
-    // Победа — домой (эпилог: дверь заперта, записка на стене); последняя жизнь — конец игры.
-    this.time.delayedCall(1800, () => goto(this, again ? 'Battle' : won ? 'Home' : 'GameOver', again ? { final: true } : undefined));
+    this.time.delayedCall(1800, () => goto(this, won ? 'Home' : 'GameOver'));
   }
 
   private finish(outcome: DayOutcome, message: string): void {
+    if (this.finished) return;
+    this.finished = true;
     this.refresh();
     if (run.quickFight) return this.finishQuick(outcome.kind === 'win' ? 'Победа' : message);
     run.axeCharges = this.sim.axeCharges;

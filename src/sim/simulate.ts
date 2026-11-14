@@ -10,7 +10,7 @@
 // Эталонные сборки по ночам (REF): «осмысленная» — с позициями под соседство и с лечением;
 // «наивная» — те же предметы, разложенные случайно (в каждом прогоне заново), без учёта соседства.
 // Бюджет сборки к ночи n = стартовые монеты + Σ(доход − восполнение расходников) за прошлые ночи.
-// Проигрыш забега — START_LIVES смертей; шанс пройти забег считается из шанса смерти в каждую ночь (ночи независимы).
+// Проигрыш забега — любая смерть; шанс пройти забег считается из шансов пережить дни и победить босса (ночи независимы).
 // Дополнительно: альтернативные сборки (щит, масло, мандрагора, проклятие) и «откуда урон» — урон по типам врагов
 // и здоровье героя на привалах.
 import {
@@ -26,7 +26,6 @@ import {
   SHOP_SIZE,
   SHOP_TIER_WEIGHTS_BY_NIGHT,
   START_ITEMS,
-  START_LIVES,
 } from '../config/balance';
 import { CLIENT_IDS, CLIENTS, type ClientId } from '../data/clients';
 import { ENEMIES, ENEMY_IDS, type EnemyId } from '../data/enemies';
@@ -117,13 +116,13 @@ type DayPlan = { chain: ChainLink[]; clients: ClientId[]; contracts?: Contract[]
 interface DayResult {
   /**
    * Последняя ночь: бой с финальным боссом после дня. carried — победил со здоровьем, что осталось (null — днём погиб),
-   * full — победил с полным здоровьем (повторная попытка после смерти). Предметы — что осталось после дня.
+   * full — отдельная диагностика боя с полным здоровьем, в забеге повторной попытки нет. Предметы — что осталось после дня.
    */
   final?: { carried: boolean | null; full: boolean };
   /** Здоровье в конце дня (0 — смерть). */
   hp: number;
   won: boolean;
-  /** Награды выполненных заказов (за вычетом украденного) минус неустойки за невыполненные. Кикимора — тоже доход: она гасит долг. */
+  /** Награды выполненных заказов (за вычетом украденного) минус неустойки за невыполненные при отступлении. */
   income: number;
   /** Сколько стоит купить заново потраченные за день заряды расходников. */
   replacement: number;
@@ -247,7 +246,7 @@ function playDay(
   }
   const won = sim.status === 'won';
 
-  // Доход: как contractResults в state.ts — победа, смерть (полная неустойка) или отступление (доля неустойки).
+  // Доход: как contractResults в state.ts — награда за победу; неустойка только при отступлении, после смерти её нет.
   let income = 0;
   let done = 0;
   const defeated = sim.defeated;
@@ -262,7 +261,6 @@ function playDay(
         income += Math.max(0, c.reward * bonus - sim.stolen[i]);
         done++;
       } else if (retreated) income -= Math.ceil((c.penalty * (total - killed)) / total);
-      else income -= c.penalty;
     });
   }
 
@@ -492,27 +490,13 @@ for (let n = 1; n <= NIGHTS; n++) {
 }
 
 /**
- * Шанс пройти забег: смертей меньше START_LIVES. deaths[n] — доля дней ночи n, закончившихся смертью (0..1).
- * Ночи считаются независимыми; потеря предмета после смерти не учитывается.
+ * Шанс пройти забег без единой смерти. deaths[n] — доля дней ночи n, закончившихся смертью (0..1).
+ * Ночи считаются независимыми. Последняя ночь добавляет выживание днём и победу над боссом без повторной попытки.
  */
 function runSurvival(deaths: number[], last?: Stats): number {
-  // dist[k] — вероятность k смертей к этому моменту (k ≥ START_LIVES — забег уже проигран, отдельно не ведём).
-  let dist = [1];
-  for (const p of deaths) {
-    const next = new Array(START_LIVES).fill(0);
-    dist.forEach((q, k) => {
-      next[k] += q * (1 - p);
-      if (k + 1 < START_LIVES) next[k + 1] += q * p;
-    });
-    dist = next;
-  }
-  if (!last) return dist.reduce((s, q) => s + q, 0) * 100;
-  // Последняя ночь — день и финальный босс: проиграл ему — −1 жизнь и попытка с полным здоровьем, пока есть жизни.
-  const pd = last.dayDeath / 100;
-  const wc = last.finalCarried / 100;
-  const wf = last.finalFull / 100;
-  const retry = (k: number) => (k >= START_LIVES ? 0 : 1 - Math.pow(1 - wf, START_LIVES - k));
-  return dist.reduce((s, q, k) => s + q * ((1 - pd) * (wc + (1 - wc) * retry(k + 1)) + pd * retry(k + 1)), 0) * 100;
+  const days = deaths.reduce((chance, death) => chance * (1 - death), 1);
+  if (!last) return days * 100;
+  return days * (1 - last.dayDeath / 100) * (last.finalCarried / 100) * 100;
 }
 
 // ─── Экономика ───────────────────────────────────────────────────────────────
@@ -527,9 +511,10 @@ for (let n = 1; n <= NIGHTS; n++) {
   const c = cost(REF[n]);
   const next = n < NIGHTS ? cost(REF[n + 1]) - c : 0;
   const nextItems = n < NIGHTS ? REF[n + 1].length - REF[n].length : 0;
+  const death = n === NIGHTS ? s.dayDeath : 100 - s.wins;
   console.log(
     `  ${n}   ${pad(s.income.toFixed(0), 4)}  ${pad(s.replacement.toFixed(0), 8)}  ${pad(free.toFixed(0), 8)}  ${pad(c, 14)}  ${pad(budget.toFixed(0), 6)}` +
-      `  ${(c <= budget ? 'да' : 'НЕТ').padStart(9)}  ${pad(n < NIGHTS ? `${next} (${nextItems} шт.)` : '—', 18)}  ${pad((100 - s.wins).toFixed(0), 5)}%`,
+      `  ${(c <= budget ? 'да' : 'НЕТ').padStart(9)}  ${pad(n < NIGHTS ? `${next} (${nextItems} шт.)` : '—', 18)}  ${pad(death.toFixed(0), 5)}%`,
   );
   budget += free;
 }
@@ -537,9 +522,9 @@ const survive = runSurvival([1, 2, 3, 4].map((n) => (100 - meaningful[n].wins) /
 const fin = meaningful[NIGHTS];
 console.log(
   `\n    Ночь ${NIGHTS} и финальный босс: днём погиб ${fin.dayDeath.toFixed(0)}%, босс побеждён со здоровьем после дня ${fin.finalCarried.toFixed(0)}%` +
-    ` (среди выживших днём), с полным здоровьем ${fin.finalFull.toFixed(0)}%`,
+    ` (среди выживших днём); диагностика с полным здоровьем ${fin.finalFull.toFixed(0)}%`,
 );
-console.log(`    Шанс пройти забег (победить босса, пока есть жизни; ночи независимы): ${survive.toFixed(0)}%   цель — 50–60%`);
+console.log(`    Шанс пройти забег (одна жизнь, без повторной попытки у босса; ночи независимы): ${survive.toFixed(0)}%   цель эталона — 30–40%`);
 
 // ─── Условия и модификаторы по отдельности ───────────────────────────────────
 // День из заказов одного заказчика (враги без модификаторов) или из врагов с одним модификатором

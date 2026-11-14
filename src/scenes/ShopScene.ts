@@ -3,7 +3,6 @@ import * as Phaser from 'phaser';
 import { BG_SHOP_KEY, HORSE_ART, itemKey, SHOP_LAYOUT, statIconKey, tagKey, UI_ART, uiShopCardKey } from '../config/assets';
 import { ITEM_STATS, SHOP_SIZE } from '../config/balance';
 import { FEEL } from '../config/feel';
-import { CLIENTS } from '../data/clients';
 import { ITEMS, type ItemId } from '../data/items';
 import { TAGS } from '../data/tags';
 import type { OwnedItem } from '../systems/backpack';
@@ -144,10 +143,6 @@ export class ShopScene extends Phaser.Scene {
     this.lifts = [];
     this.cardCells = [];
     this.dragging = false;
-    const orders = run.accepted.length
-      ? run.accepted.map((c) => `${CLIENTS[c.client].name} (врагов: ${c.enemies.length})`).join(', ')
-      : 'нет';
-    addText(this, L.orders.x, L.orders.y, `Заказы на день: ${orders}`, 24, C.dim);
     // Подсказка при наведении на значок, форму или характеристику карточки.
     this.hint = addText(this, 0, 0, '', 20, C.text, {
       align: 'center',
@@ -240,7 +235,6 @@ export class ShopScene extends Phaser.Scene {
       if (id === 'shopHome') return { x: L.home.x - L.home.w / 2, y: L.home.y - L.home.h / 2, w: L.home.w, h: L.home.h };
       return null;
     });
-    addText(this, L.hint.x, L.hint.y, 'Купить — перетащи товар в мешок\n(на такой же предмет — слияние ★2)', 20, C.dim, { align: 'center' }).setOrigin(0.5);
 
     this.drawOwnedItems();
 
@@ -664,10 +658,6 @@ export class ShopScene extends Phaser.Scene {
     const T = L.tiles;
     const pages = Math.max(1, Math.ceil(run.items.length / TILES_PER_PAGE));
     this.page = Phaser.Math.Clamp(this.page, 0, pages - 1);
-    addText(this, L.bag.x + L.bag.w / 2, L.bagTitleY, 'Твои вещи — продать: перетащи на прилавок', 22, C.text, {
-      backgroundColor: 'rgba(0,0,0,0.6)',
-      padding: { x: 12, y: 4 },
-    }).setOrigin(0.5, 0);
 
     const first = this.page * TILES_PER_PAGE;
     this.tiles = [];

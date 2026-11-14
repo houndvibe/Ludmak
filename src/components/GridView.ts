@@ -242,6 +242,15 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
         g.lineStyle(2, cfg.cellLineColor ?? C.border, cfg.cellLineAlpha ?? 1).strokeRect(c * cell, r * cell, cell, cell);
       }
     }
+    // Сундук («вне сумок»): клетки в том же стиле, что у сумок, — видно, сколько места занимают вещи.
+    if (cfg.stash) {
+      const sg = this.stashGrid();
+      for (let r = 0; r < sg.rows; r++)
+        for (let c = 0; c < sg.cols; c++) {
+          g.fillStyle(cfg.cellFillColor ?? 0x0e0c12, cfg.cellFillAlpha ?? 0.85).fillRect(sg.gx + c * cfg.stash.cell, sg.gy + r * cfg.stash.cell, cfg.stash.cell, cfg.stash.cell);
+          g.lineStyle(2, cfg.cellLineColor ?? C.border, cfg.cellLineAlpha ?? 1).strokeRect(sg.gx + c * cfg.stash.cell, sg.gy + r * cfg.stash.cell, cfg.stash.cell, cfg.stash.cell);
+        }
+    }
     this.add(g);
     this.linkLayer = scene.add.graphics();
     this.add(this.linkLayer);
@@ -267,6 +276,14 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
 
   get gridHeight(): number {
     return this.cfg.mask.rows * this.cfg.cell;
+  }
+
+  /** Экранный прямоугольник видимого предмета (например, покупки в сундуке для обучения). */
+  itemRect(uid: number): { x: number; y: number; w: number; h: number } | null {
+    const p = this.pieces.get(uid);
+    if (!p || !p.cont.visible) return null;
+    const b = p.cont.getBounds();
+    return { x: b.x, y: b.y, w: b.width, h: b.height };
   }
 
   private item(uid: number): T | undefined {
@@ -311,7 +328,16 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     this.pieces.set(it.uid, p);
   }
 
-  /** Расставляет предметы: в сетке — по клеткам, в режиме 'edit' остальные — рядами в зоне «вне сумок». */
+  /** Клеточная сетка зоны «вне сумок» в координатах контейнера: левый верх, число колонок и рядов. */
+  private stashGrid(): { gx: number; gy: number; cols: number; rows: number } {
+    const s = this.cfg.stash!;
+    const m = 4;
+    const cols = Math.max(1, Math.floor((s.w - 2 * m) / s.cell));
+    const rows = Math.max(1, Math.floor((s.h - 2 * m) / s.cell));
+    return { gx: s.x - this.x + (s.w - cols * s.cell) / 2, gy: s.y - this.y + (s.h - rows * s.cell) / 2, cols, rows };
+  }
+
+  /** Расставляет предметы: в сетке — по клеткам, в режиме 'edit' остальные — по клеткам сундука. */
   layout(): void {
     const { cell, stash } = this.cfg;
     const items = this.cfg.items();
@@ -323,13 +349,9 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
         this.pieces.delete(uid);
       }
     }
-    // Зона «вне сумок»: рядами слева направо; не влезло по высоте — следующая страница.
-    const left = stash ? stash.x - this.x + 20 : 0;
-    const top = stash ? stash.y - this.y + 20 : 0;
-    let sx = left;
-    let sy = top;
-    let rowH = 0;
-    let page = 0;
+    // Сундук: укладка по клеткам слева направо, сверху вниз; не влезло — следующая страница.
+    const sg = stash ? this.stashGrid() : null;
+    const occ: boolean[][][] = sg ? [Array.from({ length: sg.rows }, () => new Array<boolean>(sg.cols).fill(false))] : [];
     this.pageOf.clear();
     for (const it of items) {
       const p = this.pieces.get(it.uid);
@@ -339,27 +361,33 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
       if (it.inGrid) {
         p.cont.setVisible(true);
         p.layout(cell, (it.col + f.w / 2) * cell, (it.row + f.h / 2) * cell, s.w, s.h, it.rotated, s.star ?? 1);
-      } else if (stash) {
-        const w = f.w * stash.cell;
-        const h = f.h * stash.cell;
-        if (sx + w > left + stash.w - 40) {
-          sx = left;
-          sy += rowH + 12;
-          rowH = 0;
+      } else if (stash && sg) {
+        const tryPlace = (grid: boolean[][], pg: number): boolean => {
+          for (let r = 0; r <= sg.rows - f.h; r++)
+            for (let c = 0; c <= sg.cols - f.w; c++) {
+              let free = true;
+              for (let dr = 0; dr < f.h && free; dr++) for (let dc = 0; dc < f.w && free; dc++) if (grid[r + dr][c + dc]) free = false;
+              if (!free) continue;
+              for (let dr = 0; dr < f.h; dr++) for (let dc = 0; dc < f.w; dc++) grid[r + dr][c + dc] = true;
+              p.layout(stash.cell, sg.gx + (c + f.w / 2) * stash.cell, sg.gy + (r + f.h / 2) * stash.cell, s.w, s.h, it.rotated, s.star ?? 1);
+              this.pageOf.set(it.uid, pg);
+              return true;
+            }
+          return false;
+        };
+        for (let pg = 0; ; pg++) {
+          if (pg >= occ.length) occ.push(Array.from({ length: sg.rows }, () => new Array<boolean>(sg.cols).fill(false)));
+          if (tryPlace(occ[pg], pg)) break;
+          if (occ[pg].every((row) => row.every((v) => !v))) {
+            // Крупнее страницы — кладём в левый верхний угол, даже если вылезает за клетки.
+            p.layout(stash.cell, sg.gx + (f.w / 2) * stash.cell, sg.gy + (f.h / 2) * stash.cell, s.w, s.h, it.rotated, s.star ?? 1);
+            this.pageOf.set(it.uid, pg);
+            break;
+          }
         }
-        if (sy + h > top + stash.h - 40 && sy > top) {
-          page++;
-          sx = left;
-          sy = top;
-          rowH = 0;
-        }
-        this.pageOf.set(it.uid, page);
-        p.layout(stash.cell, sx + w / 2, sy + h / 2, s.w, s.h, it.rotated, s.star ?? 1);
-        sx += w + 12;
-        rowH = Math.max(rowH, h);
       }
     }
-    this.stashPages = page + 1;
+    this.stashPages = occ.length;
     this.stashPage = Phaser.Math.Clamp(this.stashPage, 0, this.stashPages - 1);
     for (const [uid, pg] of this.pageOf) this.pieces.get(uid)?.cont.setVisible(pg === this.stashPage);
     this.cfg.onStashPages?.(this.stashPage, this.stashPages);

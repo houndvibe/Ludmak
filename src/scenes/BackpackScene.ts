@@ -64,7 +64,6 @@ function saveHideLabels(v: boolean): void {
 }
 
 export class BackpackScene extends Phaser.Scene {
-  private countText!: Phaser.GameObjects.Text;
   private view!: GridView<OwnedItem>;
   /** Содержимое пергамента (пересобирается) и подсказка к его плашкам. */
   private panelObjs: Phaser.GameObjects.GameObject[] = [];
@@ -90,24 +89,19 @@ export class BackpackScene extends Phaser.Scene {
     addHeader(this, 'Укладка рюкзака');
     addText(
       this,
-      L.grid.x,
-      110,
-      'Перетаскивай мышью, ПКМ — повернуть. Соседи усиливают или портят друг друга. Такой же предмет поверх — слияние ★.',
+      L.hint.x,
+      L.hint.y,
+      'Перетаскивай мышью, ПКМ — повернуть.\nСоседи усиливают или портят друг друга.\nТакой же предмет поверх — слияние ★.',
       24,
-      C.dim,
+      C.text,
+      { backgroundColor: 'rgba(20,18,26,0.92)', padding: { x: 14, y: 10 }, lineSpacing: 6 },
     );
-    this.countText = addText(this, L.grid.x, 200, '', 26, C.accent);
     this.mainSlot = this.add.container(0, 0).setDepth(11);
     this.mainGlow = null;
     this.addHideLabelsCheckbox();
 
-    // «Вне сумок» — внутренность сундука на фоне; подпись и страницы — на крышке.
+    // «Вне сумок» — внутренность сундука на фоне; страницы — на крышке.
     const s = L.stash;
-    addText(this, L.stashTitle.x, L.stashTitle.y, 'Вне сумок — в бою не участвуют', 24, C.text, {
-      stroke: '#000000',
-      strokeThickness: 4,
-    }).setOrigin(0.5);
-
     // Страницы «вне сумок»: стрелки видны, только когда вещей больше, чем влезает.
     const nav = L.stashNav;
     const pageText = addText(this, nav.pageX, nav.y, '', 22, C.text, { stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5);
@@ -115,7 +109,7 @@ export class BackpackScene extends Phaser.Scene {
     const next = new Button(this, nav.nextX, nav.y, nav.w, nav.h, '▶', () => this.view.turnStashPage(1), 24);
     const showPages = (page: number, count: number) => {
       const many = count > 1;
-      pageText.setText(many ? `стр. ${page + 1} из ${count}` : '');
+      pageText.setText(many ? `${page + 1}/${count}` : '');
       prev.setVisible(many).setEnabled(page > 0);
       next.setVisible(many).setEnabled(page < count - 1);
     };
@@ -164,6 +158,8 @@ export class BackpackScene extends Phaser.Scene {
       this.time.delayedCall(FEEL.backpackInfoKeepMs + 20, () => check(this.input.activePointer));
     };
     this.power = computePower(run.items);
+    // В обучении сюда приходят сразу после первой покупки: она последняя по uid и лежит в сундуке.
+    const tutorialPurchase = run.items.filter((it) => !it.inGrid).sort((a, b) => b.uid - a.uid)[0] ?? null;
     this.view = new GridView<OwnedItem>(this, {
       x: L.grid.x,
       y: L.grid.y,
@@ -232,6 +228,8 @@ export class BackpackScene extends Phaser.Scene {
         if (main && !main.inGrid) setMain(null);
         this.refresh();
         tutorialDone(this, 'drag'); // обучение: предмет переложили
+        // Отдельный первый шаг засчитывается только за перенос именно покупки из сундука в сумки.
+        if (tutorialPurchase?.inGrid) tutorialDone(this, 'stashToBag');
       },
       onStashPages: showPages,
       linkHover: true,
@@ -253,6 +251,11 @@ export class BackpackScene extends Phaser.Scene {
     // Обучение: сетка (перетащить, метки), панель «Сила снаряжения», кнопка «Домой».
     const grid = { x: L.grid.x, y: L.grid.y, w: gridW, h: gridH };
     tutorialAttach(this, (id) => {
+      if (id === 'stashToBag') {
+        if (!tutorialPurchase || tutorialPurchase.inGrid) return 'skip';
+        const r = this.view.itemRect(tutorialPurchase.uid);
+        return r ? { ...r, drop: grid } : null;
+      }
       if (id === 'drag' || id === 'labels') return grid;
       if (id === 'mainWeapon') {
         const m = L.mainSlot;
@@ -349,14 +352,16 @@ export class BackpackScene extends Phaser.Scene {
   private addHideLabelsCheckbox(): void {
     const r = BACKPACK_LAYOUT.hideLabels;
     hideSynergyLabels = loadHideLabels();
-    this.add.rectangle(r.x, r.y, r.size, r.size, 0x000000, 0.6).setStrokeStyle(2, C.border);
-    const mark = addText(this, r.x, r.y, '✔', Math.round(r.size * 0.8), C.accent, { fontStyle: 'bold' }).setOrigin(0.5);
-    const label = addText(this, r.x + r.size / 2 + 12, r.y, 'Скрыть эффекты соседства', 24, C.text).setOrigin(0, 0.5);
+    // Подпись прижата к правому краю (r.x — её правый край), квадратик — слева от неё; вся строка вровень с верхним рядом сумок.
+    const label = addText(this, r.x, r.y, 'Скрыть эффекты соседства', 24, C.text).setOrigin(1, 0.5);
+    const boxX = r.x - label.width - 12 - r.size / 2;
+    this.add.rectangle(boxX, r.y, r.size, r.size, 0x000000, 0.6).setStrokeStyle(2, C.border);
+    const mark = addText(this, boxX, r.y, '✔', Math.round(r.size * 0.8), C.accent, { fontStyle: 'bold' }).setOrigin(0.5);
     const show = () => mark.setVisible(hideSynergyLabels);
     show();
     // Нажимается и квадратик, и подпись.
     const hit = this.add
-      .rectangle(r.x - r.size / 2 - 6, r.y, r.size + 12 + 12 + label.width + 6, r.size + 12, 0xffffff, 0.001)
+      .rectangle(boxX - r.size / 2 - 6, r.y, r.size + 12 + 12 + label.width + 6, r.size + 12, 0xffffff, 0.001)
       .setOrigin(0, 0.5)
       .setInteractive({ useHandCursor: true });
     hit.on('pointerover', () => label.setColor(C.accent));
@@ -438,9 +443,6 @@ export class BackpackScene extends Phaser.Scene {
     for (const it of run.items) this.view.setDisabled(it.uid, !!this.power.powers.get(it.uid)?.disabled);
     this.view.setStaticLabels(this.staticLabels());
     this.view.setLinks(pairLinks(this.power.effects));
-
-    const inGrid = run.items.filter((i) => i.inGrid).length;
-    this.countText.setText(`В сумках: ${inGrid}   Вне сумок: ${run.items.length - inGrid}`);
 
     // Предмет мог исчезнуть (слияние) — тогда снова сила снаряжения.
     if (this.pinnedItem !== null && !run.items.some((i) => i.uid === this.pinnedItem)) this.pinnedItem = null;

@@ -1,9 +1,17 @@
 // Итоги ночи: краткая сводка, карточки заказов, поверженные враги и сворачиваемый журнал боя.
 import * as Phaser from 'phaser';
-import { BG_RESULTS_KEY, RESULTS_LAYOUT, RESULTS_PARCHMENT_KEY } from '../config/assets';
+import {
+  BG_RESULTS_KEY,
+  HOME_LAYOUT,
+  MENU_ART,
+  RESULTS_LAYOUT,
+  RESULTS_PARCHMENT_KEY,
+  SEAL_IMPRINT_KEY,
+  SEAL_STAMP_KEY,
+  menuShardKey,
+} from '../config/assets';
 import { PARRY_REWARD_MULT } from '../config/balance';
 import { CLIENTS } from '../data/clients';
-import { ITEMS } from '../data/items';
 import type { SoundKey } from '../config/audio';
 import { FEEL } from '../config/feel';
 import { tutorialAttach } from '../components/Hints';
@@ -13,7 +21,7 @@ import type { ContractResult, NightSummary } from '../state';
 import { enemyName } from '../data/modifiers';
 import { ENEMIES } from '../data/enemies';
 import { FINAL_BOSS } from '../config/balance';
-import { addBackground, addText, Button, C, coinIconKey, TITLE, fadeIn, goto, livesText, W } from '../ui';
+import { addBackground, addText, Button, C, coinIconKey, TITLE, fadeIn, goto, W } from '../ui';
 
 interface ResultLinePart {
   text: string;
@@ -21,8 +29,6 @@ interface ResultLinePart {
 }
 
 export class ResultsScene extends Phaser.Scene {
-  /** Область строки жизней для последней подсказки обучения. */
-  private livesRect = { x: 0, y: 0, w: 0, h: 0 };
   /** Где на экране список поверженных (для подсказки обучения). */
   private foesRect = { x: 0, y: 0, w: 0, h: 0 };
 
@@ -38,7 +44,7 @@ export class ResultsScene extends Phaser.Scene {
 
     addBackground(this, BG_RESULTS_KEY);
     if (this.textures.exists(RESULTS_PARCHMENT_KEY)) {
-      this.add.image(W / 2, R.panelY, RESULTS_PARCHMENT_KEY);
+      this.add.image(W / 2, R.panelY, RESULTS_PARCHMENT_KEY).setDisplaySize(R.panelW, R.panelH);
     } else {
       this.add.rectangle(W / 2, R.panelY, R.panelW, R.panelH, 0xc8ad76, 0.96).setStrokeStyle(2, 0x735337);
     }
@@ -51,6 +57,7 @@ export class ResultsScene extends Phaser.Scene {
     this.drawOrders(summary.results);
     const totalEnemies = summary.results.reduce((total, result) => total + result.contract.enemies.length, 0);
     this.drawFight(summary.outcome.defeated, totalEnemies);
+    this.playStamp();
 
     const final = finalAhead();
     const level = nextLevel();
@@ -62,13 +69,7 @@ export class ResultsScene extends Phaser.Scene {
     sounds.forEach((key, i) => this.time.delayedCall(FEEL.resultsSoundStepMs * (i + 1), () => sfx(this, key)));
 
     if (run.tutorial) {
-      tutorialAttach(this, (id) =>
-        id === 'adapt'
-          ? this.foesRect
-          : id === 'lives'
-            ? { x: this.livesRect.x - 12, y: this.livesRect.y - 6, w: this.livesRect.w + 24, h: this.livesRect.h + 12 }
-            : null,
-      );
+      tutorialAttach(this, (id) => (id === 'adapt' ? this.foesRect : null));
       markTutorialDone();
     }
 
@@ -89,6 +90,88 @@ export class ResultsScene extends Phaser.Scene {
     }, 32);
   }
 
+  /** Та же печать, что на принятом заказе: капля воска, оттиск «Ъ», звук и осколки. */
+  private playStamp(): void {
+    if (!this.textures.exists(SEAL_STAMP_KEY)) return;
+    const F = FEEL.stamp;
+    const S = RESULTS_LAYOUT.stamp;
+    const stamp = this.add.image(S.x, S.y, SEAL_STAMP_KEY).setDepth(20);
+    const base = S.size / stamp.width;
+    const tilt = Phaser.Math.FloatBetween(-F.tiltDeg, F.tiltDeg);
+    stamp.setScale(base * F.fromScale).setAngle(tilt * 2).setAlpha(0);
+
+    const I = HOME_LAYOUT.stamp.imprint;
+    const offX = (I.x - 0.5) * stamp.width * base;
+    const offY = (I.y - 0.5) * stamp.height * base;
+    const rad = Phaser.Math.DegToRad(tilt);
+    const ix = S.x + offX * Math.cos(rad) - offY * Math.sin(rad);
+    const iy = S.y + offX * Math.sin(rad) + offY * Math.cos(rad);
+
+    const impact = () => {
+      sfx(this, this.cache.audio.exists('seal_stamp') ? 'seal_stamp' : 'contract_accept');
+      this.tweens.add({
+        targets: stamp,
+        scaleX: base / F.imprintSquash,
+        scaleY: base * F.imprintSquash,
+        duration: 30,
+        yoyo: true,
+        ease: 'Quad.easeOut',
+      });
+      for (let i = 0; i < F.shards; i++) {
+        const n = i % MENU_ART.shards.length;
+        if (!this.textures.exists(menuShardKey(n))) continue;
+        const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
+        const shard = this.add.image(S.x, S.y, menuShardKey(n)).setScale(base * 1.6).setDepth(20);
+        const dist = F.shardDist * Phaser.Math.FloatBetween(0.6, 1);
+        this.tweens.add({
+          targets: shard,
+          x: S.x + Math.cos(a) * dist,
+          y: S.y + Math.sin(a) * dist,
+          angle: Phaser.Math.Between(-180, 180),
+          alpha: 0,
+          duration: F.shardMs,
+          ease: 'Cubic.easeOut',
+          onComplete: () => shard.destroy(),
+        });
+      }
+    };
+
+    const press = () => {
+      if (!this.textures.exists(SEAL_IMPRINT_KEY)) return impact();
+      const imprint = this.add.image(ix, iy, SEAL_IMPRINT_KEY).setDepth(20);
+      const ib = (stamp.width * base * I.size) / imprint.width;
+      imprint.setScale(ib * F.imprintFrom).setAngle(tilt).setAlpha(0);
+      this.tweens.add({
+        targets: imprint,
+        scale: ib,
+        alpha: 1,
+        duration: F.imprintMs,
+        ease: 'Quad.easeIn',
+        onComplete: impact,
+      });
+    };
+
+    this.tweens.add({
+      targets: stamp,
+      scale: base,
+      angle: tilt,
+      alpha: 1,
+      duration: F.dropMs,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        this.tweens.add({
+          targets: stamp,
+          scaleX: base * F.waxSquash,
+          scaleY: base / F.waxSquash,
+          duration: 35,
+          yoyo: true,
+          ease: 'Quad.easeOut',
+        });
+        this.time.delayedCall(F.imprintDelayMs, press);
+      },
+    });
+  }
+
   private outcomeLine(summary: NightSummary): { text: string; color: string } {
     const total = summary.results.reduce((n, result) => n + result.contract.enemies.length, 0);
     switch (summary.outcome.kind) {
@@ -104,9 +187,7 @@ export class ResultsScene extends Phaser.Scene {
     const gap = 14;
     const tileW = (R.leftW - gap) / 2;
     const goldX = R.leftX;
-    const lifeX = R.leftX + tileW + gap;
     this.addMetricTile(goldX, R.metricY, tileW, R.metricH);
-    this.addMetricTile(lifeX, R.metricY, tileW, R.metricH);
 
     addText(this, goldX + 16, R.metricY + 10, 'ЗОЛОТО', 18, C.inkDim, TITLE);
     const delta = summary.coinsAfter - summary.coinsBefore;
@@ -119,16 +200,6 @@ export class ResultsScene extends Phaser.Scene {
       { text: `${summary.coinsAfter}`, gold: true },
     ], C.ink, goldX + 16, R.metricY + 82, tileW - 32, 18);
 
-    addText(this, lifeX + 16, R.metricY + 10, 'ЖИЗНИ', 18, C.inkDim, TITLE);
-    addText(this, lifeX + 16, R.metricY + 32, livesText(summary.livesAfter), 30, C.ink, TITLE);
-    const lifeLost = summary.livesAfter < summary.livesBefore;
-    addText(this, lifeX + 150, R.metricY + 42, lifeLost ? 'Потеряна жизнь' : 'Без потерь', 18, lifeLost ? C.inkBad : C.inkGood);
-    if (summary.lostItem) {
-      addText(this, lifeX + 16, R.metricY + 82, `Предмет потерян: ${ITEMS[summary.lostItem].name}`, 17, C.inkBad);
-    } else if (summary.gameOver === 'lose') {
-      addText(this, lifeX + 16, R.metricY + 82, 'Жизней больше не осталось', 17, C.inkBad);
-    }
-    this.livesRect = { x: lifeX, y: R.metricY, w: tileW, h: R.metricH };
   }
 
   private addMetricTile(x: number, y: number, w: number, h: number): void {
@@ -164,12 +235,12 @@ export class ResultsScene extends Phaser.Scene {
 
     const count = result.contract.enemies.length;
     addText(this, x + 16, y + 45, `Враги: ${result.defeated}/${count}`, 19, C.inkDim);
-    const moneyLabel = done ? (result.advance ? 'Аванс' : 'Награда') : 'Неустойка';
-    const amount = done
-      ? (result.advance ? result.contract.reward : result.reward)
-      : result.penalty;
-    addText(this, x + w - 112, y + 45, moneyLabel, 18, C.inkDim).setOrigin(1, 0);
-    this.drawMoneyRight(x + w - 16, y + 42, `${done ? '+' : '−'}${amount}`, statusColor, 21);
+    if (done || result.penalty > 0) {
+      const moneyLabel = done ? (result.advance ? 'Аванс' : 'Награда') : 'Неустойка';
+      const amount = done ? (result.advance ? result.contract.reward : result.reward) : result.penalty;
+      addText(this, x + w - 112, y + 45, moneyLabel, 18, C.inkDim).setOrigin(1, 0);
+      this.drawMoneyRight(x + w - 16, y + 42, `${done ? '+' : '−'}${amount}`, statusColor, 21);
+    }
 
     const notes: ResultLinePart[] = [];
     if (result.stolen > 0) {

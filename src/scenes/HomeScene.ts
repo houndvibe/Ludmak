@@ -67,7 +67,7 @@ interface Hotspot {
 }
 
 export class HomeScene extends Phaser.Scene {
-  /** Обновить монеты и жизни в шапке. */
+  /** Обновить монеты в шапке. */
   private refreshHeader: () => void = () => {};
   private tooltip!: EnemyTooltip;
   private windowMask!:
@@ -729,10 +729,10 @@ export class HomeScene extends Phaser.Scene {
     );
     money(
       "Неустойка:",
-      `${c.penalty}/${Math.ceil(c.penalty / 2)}`,
+      `до ${c.penalty}`,
       k.bad,
       r.y + r.h - p.bottom - 40,
-      `Взимается, если погибнешь/сбежишь.${adv ? " Аванс придётся вернуть." : ""}`,
+      `Только за невыполненную часть заказа при отступлении.${adv ? " Аванс придётся вернуть." : ""}`,
     );
     this.cardAreas = {
       head,
@@ -813,6 +813,7 @@ export class HomeScene extends Phaser.Scene {
           this.visitorLeaves(() => decideVisitor(false));
         },
         30,
+        "refuse",
       ),
     );
   }
@@ -1020,9 +1021,9 @@ export class HomeScene extends Phaser.Scene {
             },
             {
               icon: coinIconKey(this),
-              value: `−${c.penalty}/−${Math.ceil(c.penalty / 2)}`,
+              value: `до −${c.penalty}`,
               color: C.bad,
-              hint: `Взимается, если погибнешь/сбежишь.${adv ? " Аванс придётся вернуть." : ""}`,
+              hint: `Только за невыполненную часть заказа при отступлении.${adv ? " Аванс придётся вернуть." : ""}`,
             },
           ],
           rowH,

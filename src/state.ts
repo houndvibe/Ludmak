@@ -1,5 +1,4 @@
 // Состояние забега — один объект на всю игру. Сцены читают и меняют его через функции ниже.
-import * as Phaser from 'phaser';
 import {
   ENEMY_STAT_MULT_BY_NIGHT,
   ITEM_STATS,
@@ -66,7 +65,7 @@ export interface NightSummary {
   livesAfter: number;
   /** null — забег продолжается (в последнюю ночь — впереди бой с финальным боссом). */
   gameOver: 'win' | 'lose' | null;
-  /** Конец забега в бою с финальным боссом (победа над ним или последняя жизнь). */
+  /** Конец забега в бою с финальным боссом (победа над ним или поражение). */
   final?: boolean;
 }
 
@@ -206,10 +205,7 @@ export function finalChain(): ChainLink[] {
   return [{ enemy: FINAL_BOSS, contract: 0, mod: null }];
 }
 
-/**
- * Итог боя с финальным боссом. Победа — победа в игре. Поражение — −1 жизнь; жизни остались — бой заново
- * с полным здоровьем (true), кончились — конец игры. Возвращает, будет ли ещё попытка.
- */
+/** Итог боя с финальным боссом: победа — конец игры, поражение — конец забега без повторной попытки. */
 export function resolveFinal(won: boolean): boolean {
   const s = run.summary!;
   if (won) {
@@ -221,9 +217,8 @@ export function resolveFinal(won: boolean): boolean {
     run.accepted = [];
     return false;
   }
-  run.lives = Math.max(0, run.lives - 1);
+  run.lives = 0;
   run.finalHp = null;
-  if (run.lives > 0) return true;
   run.summary = { ...s, gameOver: 'lose', final: true, livesAfter: 0, coinsAfter: run.coins };
   return false;
 }
@@ -426,7 +421,7 @@ export function buy(slot: number): boolean {
   if (!id || run.coins < ITEM_STATS[id].price) return false;
   run.coins -= ITEM_STATS[id].price;
   if (!run.debug) run.shopOffers[slot] = null; // в дебаге товар не кончается
-  addItem(id);
+  addItem(id, false); // покупка — в сундук, в сумки игрок укладывает сам
   return true;
 }
 
@@ -437,9 +432,9 @@ export function sell(uid: number): void {
   run.items.splice(run.items.indexOf(item), 1);
 }
 
-/** Новый предмет сразу кладётся в первое свободное место сетки, иначе — вне сумок. */
-function addItem(id: ItemId): void {
-  const spot = findSpot(run.items, id);
+/** Новый предмет: стартовый — в первое свободное место сетки (иначе — вне сумок), купленный (toGrid = false) — сразу в сундук. */
+function addItem(id: ItemId, toGrid = true): void {
+  const spot = toGrid ? findSpot(run.items, id) : null;
   run.items.push({
     uid: run.nextUid++,
     id,
@@ -476,10 +471,10 @@ export function contractResults(outcome: DayOutcome): ContractResult[] {
     let reward = 0;
     let penalty = 0;
     let refund = 0;
-    // Аванс уже выплачен при принятии: награды сейчас нет, а провал — вернуть его.
+    // Аванс уже выплачен при принятии. При смерти денежных наказаний нет: забег заканчивается.
     if (done) reward = advance ? 0 : Math.max(0, contract.reward * (parryBonus ? PARRY_REWARD_MULT : 1) - stolen);
-    else {
-      penalty = outcome.kind === 'death' ? contract.penalty : Math.ceil((contract.penalty * (total - defeated)) / total);
+    else if (outcome.kind !== 'death') {
+      penalty = Math.ceil((contract.penalty * (total - defeated)) / total);
       if (advance) refund = contract.reward;
     }
     return { contract, defeated, done, reward, penalty, stolen, advance, refund, parryBonus };
@@ -491,7 +486,7 @@ export function retreatPenalty(defeated: number, stolen: number[]): number {
   return contractResults({ kind: 'retreat', defeated, stolen }).reduce((s, r) => s + r.penalty + r.refund, 0);
 }
 
-/** Применяет итог дня: награды, неустойки, возврат авансов; смерть — минус жизнь и случайный предмет. Один раз в конце дня. */
+/** Применяет итог дня: награды и неустойки за отступление; любая смерть заканчивает забег без потери предмета. */
 export function resolveNight(outcome: DayOutcome): NightSummary {
   const coinsBefore = run.coins;
   const livesBefore = run.lives;
@@ -502,17 +497,8 @@ export function resolveNight(outcome: DayOutcome): NightSummary {
   // Кража у заказа с авансом: награда уже в кошельке — украденное уходит из монет.
   const stolenFromAdvance = results.filter((r) => r.advance && r.done).reduce((s, r) => s + Math.min(r.stolen, r.contract.reward), 0);
 
-  let lostItem: ItemId | null = null;
-  if (outcome.kind === 'death') {
-    run.lives = Math.max(0, run.lives - 1);
-    const inGrid = run.items.filter((i) => i.inGrid);
-    const pool = inGrid.length > 0 ? inGrid : run.items;
-    if (pool.length > 0) {
-      const lost = Phaser.Math.RND.pick(pool);
-      lostItem = lost.id;
-      run.items.splice(run.items.indexOf(lost), 1);
-    }
-  }
+  const lostItem: ItemId | null = null;
+  if (outcome.kind === 'death') run.lives = 0;
 
   // Монеты не уходят в минус: неустойка и возврат аванса забирают максимум всё, что есть.
   run.coins = Math.max(0, run.coins + reward - penalty - refund - stolenFromAdvance);

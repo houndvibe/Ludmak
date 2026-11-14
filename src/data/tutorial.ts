@@ -39,6 +39,7 @@ export type StepId =
   | "buy"
   | "shopHome"
   | "bags"
+  | "stashToBag"
   | "drag"
   | "labels"
   | "mainWeapon"
@@ -49,8 +50,7 @@ export type StepId =
   | "fireBanned"
   | "useActive"
   | "parry"
-  | "adapt"
-  | "lives";
+  | "adapt";
 
 export interface StepDef {
   id: StepId;
@@ -101,7 +101,7 @@ export const TUTORIAL_STEPS: StepDef[] = [
   {
     id: "cardMoney",
     scene: "Home",
-    text: "Награда — за выполненный заказ. Неустойка — если погибнешь, не выполнив его.",
+    text: "Награда — за выполненный заказ. Неустойка — только за невыполненную часть заказа при отступлении.",
     action: false,
     hover: true,
   },
@@ -136,6 +136,12 @@ export const TUTORIAL_STEPS: StepDef[] = [
     id: "bags",
     scene: "Home",
     text: "Загляни в конюшню и разложи снаряжение по седельным сумкам",
+    action: true,
+  },
+  {
+    id: "stashToBag",
+    scene: "Backpack",
+    text: "Купленные предметы хранятся в сундуке. Чтобы использовать покупку в бою, перенеси её из сундука в седельные сумки.",
     action: true,
   },
   {
@@ -204,13 +210,7 @@ export const TUTORIAL_STEPS: StepDef[] = [
   {
     id: "adapt",
     scene: "Results",
-    text: "Чем сильнее враг, тем сложнее логика его атак и тайминги. Если хочешь пережить эту неделю, тебе предстоит приспособиться.",
-    action: false,
-  },
-  {
-    id: "lives",
-    scene: "Results",
-    text: "У тебя 2 жизни. Смерть в бою отнимает жизнь и случайный предмет. Потеряешь обе — конец охоты",
+    text: "Чем сильнее враг, тем сложнее логика его атак и тайминги. Если хочешь пережить эту неделю, тебе предстоит приспособиться. Помни: любая смерть в бою заканчивает охоту.",
     action: false,
   },
 ];
