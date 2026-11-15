@@ -23,6 +23,8 @@ import {
   UI_ART,
   BG_HOME_CLOSED_KEY,
   BG_HOME_CLOSED_PATH,
+  HOME_FRAME_KEY,
+  HOME_FRAME_PATH,
   UI_HEADER_KEY,
   UI_PARCHMENT_KEY,
   RESULTS_PARCHMENT_KEY,
@@ -70,6 +72,7 @@ export class BootScene extends Phaser.Scene {
     this.load.image(SEAL_IMPRINT_KEY, SEAL_IMPRINT_PATH);
     for (const s of ['plain', 'rare'] as const) this.load.image(uiSourceKey(`shop_card_${s}`), UI_ART.shopCard[s].path);
     this.load.image(BG_HOME_CLOSED_KEY, BG_HOME_CLOSED_PATH);
+    this.load.image(HOME_FRAME_KEY, HOME_FRAME_PATH);
     if (HOME_LAYOUT.windowMask) this.load.image(HOME_WINDOW_MASK_KEY, HOME_LAYOUT.windowMask.path);
     for (const key of AUDIO_KEYS) this.load.audio(key, `${AUDIO_DIR}${key}.${AUDIO_FORMATS[0]}`);
   }

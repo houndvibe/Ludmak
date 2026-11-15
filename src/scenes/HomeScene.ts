@@ -4,6 +4,8 @@ import * as Phaser from "phaser";
 import {
   BG_HOME_CLOSED_KEY,
   BG_HOME_KEY,
+  CLIENT_BG_KEY,
+  HOME_FRAME_KEY,
   clientKey,
   HOME_LAYOUT,
   HOME_WINDOW_MASK_KEY,
@@ -76,8 +78,6 @@ export class HomeScene extends Phaser.Scene {
   /** Задвижка окошка: кусок фона с закрытым окном (или прямоугольник кодом). Закрыта — shutterY, открыта — выше на высоту окна. */
   private shutter!: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
   private shutterY = 0;
-  /** Тень в окошке поверх портрета: заказчик выходит из неё и уходит в неё. */
-  private windowShade!: Phaser.GameObjects.Rectangle;
   private portrait: Phaser.GameObjects.Image | Phaser.GameObjects.Rope | null =
     null;
   private card!: Phaser.GameObjects.Container;
@@ -132,15 +132,19 @@ export class HomeScene extends Phaser.Scene {
         .fillRoundedRect(wnd.x, wnd.y, wnd.w, wnd.h, wnd.radius);
       this.windowMask = maskShape.createGeometryMask();
     }
+    fit(
+      this.add.image(wnd.x + wnd.w / 2, wnd.y + wnd.h / 2, CLIENT_BG_KEY),
+      wnd.w,
+      wnd.h,
+    ).setMask(this.windowMask).setDepth(3.5);
     this.shutter = this.makeShutter();
-    // Тень окошка: между портретом (глубина 4) и задвижкой (5); без портрета окошко тёмное.
-    this.windowShade = this.add
-      .rectangle(wnd.x, wnd.y, wnd.w, wnd.h, 0x000000, 1)
-      .setOrigin(0)
-      .setAlpha(FEEL.portraitShadow.shadowAlpha)
-      .setMask(this.windowMask)
-      .setDepth(4.5);
-
+    if (this.textures.exists(HOME_FRAME_KEY)) {
+      fit(
+        this.add.image(wnd.x + wnd.w / 2, wnd.y + wnd.h / 2, HOME_FRAME_KEY),
+        wnd.w,
+        wnd.h,
+      ).setDepth(6);
+    }
     this.board = this.add.container(0, 0);
     this.card = this.add.container(0, 0);
     this.refreshBoard();
@@ -214,24 +218,19 @@ export class HomeScene extends Phaser.Scene {
       L.portraitWidth,
       this.windowMask,
     ).setDepth(4);
-    // Выходит из тени: из глубины (меньше) к окошку, тень рассеивается.
+    // Приближается и плавно появляется; фон окна остаётся неподвижным.
     const S = FEEL.portraitShadow;
     const k = img.scale;
     img
       .setY(L.window.y + L.portraitOffsetY + img.displayHeight / 2)
-      .setScale(k * S.backScale);
+      .setScale(k * S.backScale)
+      .setAlpha(0);
     this.tweens.add({
       targets: img,
       scale: k,
+      alpha: 1,
       duration: S.inMs,
       ease: "Cubic.easeOut",
-    });
-    this.tweens.killTweensOf(this.windowShade);
-    this.tweens.add({
-      targets: this.windowShade,
-      alpha: 0,
-      duration: S.inMs,
-      ease: "Sine.easeOut",
     });
     this.portrait = img;
     sfx(this, "monster_arrive");
@@ -282,20 +281,14 @@ export class HomeScene extends Phaser.Scene {
     const img = this.portrait;
     this.portrait = null;
     if (!img) return this.showVisitor();
-    // Уходит назад в тень: уменьшается, окошко темнеет; потом следующий выходит из тени (или задвижка закрывается).
+    // Отдаляется и исчезает; после полного исчезновения появляется следующий заказчик.
     const S = FEEL.portraitShadow;
     this.tweens.add({
       targets: img,
       scale: img.scale * S.backScale,
+      alpha: 0,
       duration: S.outMs,
       ease: "Cubic.easeIn",
-    });
-    this.tweens.killTweensOf(this.windowShade);
-    this.tweens.add({
-      targets: this.windowShade,
-      alpha: S.shadowAlpha,
-      duration: S.outMs,
-      ease: "Sine.easeIn",
       onComplete: () => {
         img.destroy();
         this.showVisitor();
@@ -303,10 +296,7 @@ export class HomeScene extends Phaser.Scene {
     });
   }
 
-  /**
-   * Задвижка окошка — кусок фона с закрытым окном (home_closed.webp) ровно по окошку: фон растянут так же, как в
-   * addBackground, обрезан по HOME_LAYOUT.window и спрятан за маской окна. Нет картинки — прямоугольник кодом.
-   */
+  /** Отдельная ставня художницы, вписанная в проём окошка. Нет картинки — прямоугольник кодом. */
   private makeShutter():
     | Phaser.GameObjects.Image
     | Phaser.GameObjects.Rectangle {
@@ -320,20 +310,12 @@ export class HomeScene extends Phaser.Scene {
         .setMask(this.windowMask)
         .setDepth(5);
     }
-    const img = this.add.image(W / 2, H / 2, BG_HOME_CLOSED_KEY);
-    const s = Math.max(W / img.width, H / img.height);
-    img.setScale(s);
-    // Окошко в пикселях картинки (с запасом 4 px, чтобы края не просвечивали).
-    const left = W / 2 - (img.width * s) / 2;
-    const top = H / 2 - (img.height * s) / 2;
-    img.setCrop(
-      (wnd.x - left) / s - 4,
-      (wnd.y - top) / s - 4,
-      wnd.w / s + 8,
-      wnd.h / s + 8,
-    );
-    this.shutterY = H / 2;
-    return img.setMask(this.windowMask).setDepth(5);
+    this.shutterY = wnd.y + wnd.h / 2;
+    return this.add
+      .image(wnd.x + wnd.w / 2, this.shutterY, BG_HOME_CLOSED_KEY)
+      .setDisplaySize(wnd.w, wnd.h)
+      .setMask(this.windowMask)
+      .setDepth(5);
   }
 
   /** Задвижка падает вниз с отскоком, на ударе — облачко пыли по низу окошка. */

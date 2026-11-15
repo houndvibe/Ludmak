@@ -94,12 +94,15 @@ export const BG_HOME_KEY = "bg_home";
  * задвижка окошка: кусок по HOME_LAYOUT.window. Необязательный: нет файла — задвижка рисуется кодом.
  */
 export const BG_HOME_CLOSED_KEY = "bg_home_closed";
-export const BG_HOME_CLOSED_PATH = "backgrounds/home_closed.webp";
+export const BG_HOME_CLOSED_PATH = "portraits/clients/bg_house_door_window.png";
+export const HOME_FRAME_KEY = "home_window_frame";
+export const HOME_FRAME_PATH = "portraits/clients/bg_house_door_frame.png";
 /** Маска проёма окошка в двери (HOME_LAYOUT.windowMask). */
 export const HOME_WINDOW_MASK_KEY = "ui_home_window_mask";
 
 export const enemyKey = (id: EnemyId) => `portrait_enemy_${id}`;
 export const clientKey = (id: ClientId) => `portrait_client_${id}`;
+export const CLIENT_BG_KEY = "portrait_client_bg";
 export const itemKey = (id: ItemId) => `item_${id}`;
 export const enemyItemKey = (id: EnemyItemId) => `enemy_item_${id}`;
 export const tagKey = (id: TagId) => `tag_${id}`;
@@ -604,6 +607,11 @@ export const ASSET_MANIFEST: AssetEntry[] = [
     path: `portraits/clients/${id}.png`,
     stub: { kind: "portrait", label: CLIENTS[id].name } as StubSpec,
   })),
+  {
+    key: CLIENT_BG_KEY,
+    path: "portraits/clients/client_bg.png",
+    stub: { kind: "background", label: "Фон заказчика", w: PORTRAIT_W, h: PORTRAIT_H, color: "#201a24" },
+  },
   ...ITEM_IDS.map((id) => ({
     key: itemKey(id),
     path: `items/${id}.png`,
