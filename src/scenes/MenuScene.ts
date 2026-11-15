@@ -14,7 +14,7 @@ import { ENEMIES, ENEMY_IDS } from "../data/enemies";
 import { NIGHTS } from "../config/balance";
 import { FEEL } from "../config/feel";
 import { playMusic, sfx } from "../components/Sound";
-import { isSlowCircles, newQuickFight, newRun, setSlowCircles } from "../state";
+import { isEnemySeen, isSlowCircles, newQuickFight, newRun, setSlowCircles } from "../state";
 import {
   addBackground,
   addText,
@@ -63,8 +63,9 @@ export class MenuScene extends Phaser.Scene {
     this.addAmbience();
 
     const L = MENU_LAYOUT;
-    // Дебаг (галочка): обучение пропускается, 999 монет, в магазине все предметы.
-    this.debug = loadDebug();
+    const local = window.location.hostname === "localhost";
+    // Дебаг (галочка): обучение пропускается, 999 монет, в магазине все предметы. Только локальная разработка.
+    this.debug = local && loadDebug();
     const start = (withTutorial: boolean) => {
       newRun(withTutorial, this.debug);
       goto(this, "Home");
@@ -94,7 +95,8 @@ export class MenuScene extends Phaser.Scene {
       this.openQuickFight(),
     );
     addVolumeSlider(this, L.volume);
-    this.addDebugCheckbox();
+    if (local) this.addDebugCheckbox();
+    this.addAuthors();
   }
 
   /**
@@ -509,7 +511,7 @@ export class MenuScene extends Phaser.Scene {
         this,
         Q.x,
         top + A.subY,
-        "Один бой со стартовым снаряжением.",
+        "Изучайте шаблоны атак врагов, их слабые и сильные стороны",
         A.subSize,
         A.subColor,
         { fontStyle: "bold" },
@@ -556,19 +558,22 @@ export class MenuScene extends Phaser.Scene {
 
     // Враги: портреты в ряд под рамкой художницы (ui/portrait_frame.png), имя под портретом; клик — бой.
     const framed = has("portraitFrame");
-    const n = ENEMY_IDS.length;
-    const gap = (Q.w - 80 - n * Q.portrait) / Math.max(1, n - 1);
-    ENEMY_IDS.forEach((id, i) => {
-      const x = Q.x - Q.w / 2 + 40 + Q.portrait / 2 + i * (Q.portrait + gap);
+    const quickEnemies = ENEMY_IDS.filter((id) => this.debug || !ENEMIES[id].boss);
+    const n = quickEnemies.length;
+    // Одинаковые промежутки между портретами и от краёв окна: n портретов, n + 1 равных отступов.
+    const gap = (Q.w - n * Q.portrait) / (n + 1);
+    quickEnemies.forEach((id, i) => {
+      const x = Q.x - Q.w / 2 + gap + Q.portrait / 2 + i * (Q.portrait + gap);
       const y = top + A.portraitsY;
       const fh = framed ? A.frameH : Q.portrait * 1.25 + 10;
+      const unlocked = this.debug || isEnemySeen(id);
       const card = this.add.container(x, y);
       const back = this.add.rectangle(0, 0, Q.portrait, Q.portrait * 1.25, 0x000000, 0.6);
       const img = fit(
         this.add.image(0, 0, enemyKey(id)),
         Q.portrait,
         Q.portrait * 1.25,
-      );
+      ).setVisible(unlocked);
       const frame = framed
         ? this.add.image(0, 0, menuArtKey("portraitFrame")).setDisplaySize(A.frameW, A.frameH)
         : this.add
@@ -579,7 +584,7 @@ export class MenuScene extends Phaser.Scene {
         this,
         x,
         y + fh / 2 + A.nameGap,
-        ENEMIES[id].name,
+        unlocked ? ENEMIES[id].name : "Заблокирован",
         A.nameSize,
         MENU_ART.buttonTextColor,
         {
@@ -593,8 +598,9 @@ export class MenuScene extends Phaser.Scene {
         .setShadow(0, 2, "#000000", 0, true, true);
       const hit = this.add
         .rectangle(x, y, A.frameW, fh, 0xffffff, 0.001)
-        .setInteractive({ useHandCursor: true });
+        .setInteractive({ useHandCursor: unlocked });
       hit.on("pointerover", () => {
+        if (!unlocked) return;
         sfx(this, "ui_hover");
         card.setScale(1.04);
         if (!framed) (frame as Phaser.GameObjects.Rectangle).setStrokeStyle(3, 0xe0b65a);
@@ -606,7 +612,7 @@ export class MenuScene extends Phaser.Scene {
         name.setColor(MENU_ART.buttonTextColor);
       });
       hit.on("pointerdown", (p: Phaser.Input.Pointer) => {
-        if (p.button !== 0) return;
+        if (!unlocked || p.button !== 0) return;
         sfx(this, "ui_click");
         newQuickFight(id, this.quickNight, this.debug);
         goto(this, "Battle", ENEMIES[id].boss ? { final: true } : undefined);
@@ -628,7 +634,35 @@ export class MenuScene extends Phaser.Scene {
     );
   }
 
-  /** Галочки внизу слева: «Debug-режим» и рядом «Медленные кружки». */
+  /** Авторы справа на уровне громкости; имена открывают Telegram в новой вкладке. */
+  private addAuthors(): void {
+    const A = MENU_LAYOUT.authors;
+    const style = { ...TITLE, stroke: "#000000", strokeThickness: 3 };
+    const prefix = addText(this, A.x, A.y, "Авторы: ", A.size, MENU_ART.buttonTextColor, style)
+      .setOrigin(0, 0.5)
+      .setShadow(0, 3, "#000000", 0, true, true);
+    const authorLink = (x: number, name: string, url: string) => {
+      const text = addText(this, x, A.y, name, A.size, C.accent, style)
+        .setOrigin(0, 0.5)
+        .setShadow(0, 3, "#000000", 0, true, true)
+        .setInteractive({ useHandCursor: true });
+      text.on("pointerover", () => text.setColor("#ffffff"));
+      text.on("pointerout", () => text.setColor(C.accent));
+      text.on("pointerdown", (p: Phaser.Input.Pointer) => {
+        if (p.button !== 0) return;
+        sfx(this, "ui_click");
+        window.open(url, "_blank", "noopener,noreferrer");
+      });
+      return text;
+    };
+    const artem = authorLink(prefix.x + prefix.width, "Артем", "https://t.me/ArtemlyTG");
+    const separator = addText(this, artem.x + artem.width, A.y, " и ", A.size, MENU_ART.buttonTextColor, style)
+      .setOrigin(0, 0.5)
+      .setShadow(0, 3, "#000000", 0, true, true);
+    authorLink(separator.x + separator.width, "Соня", "https://t.me/strichcod");
+  }
+
+  /** Галочки вверху слева: «Debug-режим» и рядом «Медленные кружки». */
   private addDebugCheckbox(): void {
     const r = MENU_LAYOUT.debug;
     const right = this.addCheckbox(r.x, "Debug-режим", this.debug, (v) => {

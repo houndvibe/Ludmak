@@ -605,16 +605,6 @@ export class BattleSim {
       e.guardBroken = Math.max(0, e.guardBroken - dt);
       if (e.guardBroken === 0) this.events.push({ type: 'guardUp' });
     }
-    // Знак Квен: через first (потом every) секунд — купол.
-    if (ENEMIES[e.id].quen && !e.quenOn) {
-      e.quenTimer += dt;
-      if (e.quenTimer >= (e.quenCount ? ENEMY_PATTERN.quen.every : ENEMY_PATTERN.quen.first)) {
-        e.quenOn = true;
-        e.quenStreak = 0;
-        e.quenCount++;
-        this.events.push({ type: 'quen', on: true });
-      }
-    }
     if (e.haste > 0) e.haste = Math.max(0, e.haste - dt); // чуткий сон: время идёт и под оглушением
     if (e.stun > 0) {
       e.stun = Math.max(0, e.stun - dt); // оглушённый враг не готовит действия и не тикает щитом
@@ -795,6 +785,14 @@ export class BattleSim {
     const taken = dmg - absorbed;
     e.hp = Math.max(0, e.hp - taken);
     this.events.push({ type: 'enemyHit', taken, absorbed, buffed, firstStrike, halved, guarded, quen, pierced, item });
+    // Квен: удар, перешедший очередной порог здоровья, наносит урон; купол закрывает уже следующие удары.
+    const quenThreshold = ENEMY_PATTERN.quen.atHp[e.quenCount];
+    if (ENEMIES[e.id].quen && !e.quenOn && e.hp > 0 && quenThreshold !== undefined && e.hp <= e.maxHp * quenThreshold) {
+      e.quenOn = true;
+      e.quenStreak = 0;
+      e.quenCount++;
+      this.events.push({ type: 'quen', on: true });
+    }
     // Разбойник: здоровье упало ниже порога — кружок бегства (один раз за бой).
     if (ENEMIES[e.id].escape && !e.escapeTried && e.hp > 0 && e.hp < e.maxHp * ENEMY_PATTERN.escapeBelow) {
       e.escapeTried = true;

@@ -17,7 +17,7 @@ import { BattleSim, type AttackKind, type BattleEvent, type EnemySlot } from '..
 import { ENEMY_ITEMS, type EnemyItemId } from '../data/enemyItems';
 import { footprint, MASK, rectMask, type OwnedItem } from '../systems/backpack';
 import { pairLinks, starOf } from '../systems/synergy';
-import { isParryLeftButton, isSlowCircles, dayChain, destroyItem, finalChain, resolveFinal, resolveNight, retreatPenalty, run, spendCharge, type DayOutcome } from '../state';
+import { isParryLeftButton, isSlowCircles, dayChain, destroyItem, finalChain, markEnemySeen, resolveFinal, resolveNight, retreatPenalty, run, spendCharge, type DayOutcome } from '../state';
 import {
   addBackground,
   addHorse,
@@ -1285,6 +1285,7 @@ export class BattleScene extends Phaser.Scene {
     const sim = this.sim;
     const { contract, mod } = sim.chain[sim.index];
     const def = ENEMIES[sim.enemy.id];
+    markEnemySeen(def.id);
     // Первый крест каждого врага идёт в классическом порядке (верх, низ, лево, право).
     this.crossShownForEnemy = false;
     this.enemyImg.setTexture(enemyKey(def.id));

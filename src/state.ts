@@ -4,6 +4,7 @@ import {
   ITEM_STATS,
   MAX_STAR,
   NIGHTS,
+  QUICK_FIGHT_ADDITIONS_BY_NIGHT,
   SELL_RATIO,
   SHOP_REROLL_BASE,
   SHOP_REROLL_STEP,
@@ -140,13 +141,16 @@ function emptyRun(): RunState {
 }
 
 /**
- * Быстрый бой из меню: новый забег на ночь night со стартовым снаряжением (debug — монеты дебага), один заказ Водяного
+ * Быстрый бой из меню: новый забег на ночь night с накапливающимся по ночам снаряжением, один заказ Водяного
  * (условие не влияет на бой) из одного врага. Ведьмак — бой с финальным боссом с полным здоровьем.
  */
 export function newQuickFight(enemy: EnemyId, night: number, debug: boolean): void {
   newRun(false, debug);
   run.quickFight = true;
   run.night = night;
+  for (const additions of QUICK_FIGHT_ADDITIONS_BY_NIGHT.slice(0, night)) {
+    for (const id of additions) addItem(id);
+  }
   run.letterRead = true;
   run.accepted = enemy === FINAL_BOSS ? [] : [fixedContract(night, 'vodyanoy', [enemy])];
 }
@@ -241,6 +245,36 @@ export function markTutorialDone(): void {
     window.localStorage.setItem(TUTORIAL_KEY, '1');
   } catch {
     // нет хранилища — в следующий раз обучение покажется снова
+  }
+}
+
+// ─── Встреченные враги (открытие быстрого боя, localStorage) ─────────────────
+
+const SEEN_ENEMIES_KEY = 'ludmak.seenEnemies';
+
+function seenEnemies(): EnemyId[] {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(SEEN_ENEMIES_KEY) ?? '[]');
+    return Array.isArray(value) ? value as EnemyId[] : [];
+  } catch {
+    return [];
+  }
+}
+
+export function isEnemySeen(id: EnemyId): boolean {
+  return seenEnemies().includes(id);
+}
+
+/** Запоминает только врагов обычного забега: быстрый бой сам новых противников не открывает. */
+export function markEnemySeen(id: EnemyId): void {
+  if (run.quickFight) return;
+  try {
+    const seen = seenEnemies();
+    if (seen.includes(id)) return;
+    seen.push(id);
+    window.localStorage.setItem(SEEN_ENEMIES_KEY, JSON.stringify(seen));
+  } catch {
+    // Нет хранилища — список сохранить нельзя.
   }
 }
 
