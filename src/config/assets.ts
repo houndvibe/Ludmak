@@ -127,9 +127,9 @@ export interface CursorBlade {
 
 export const UI_ART = {
   button: {
-    normal: { path: "ui/button.png", crop: { x: 22, y: 165, w: 2126, h: 394 } },
-    hover: { path: "ui/button_hover.png", crop: { x: 31, y: 144, w: 2111, h: 434 } },
-    disabled: { path: "ui/button_disabled.png", crop: { x: 26, y: 143, w: 2115, h: 437 } },
+    normal: { path: "ui/button.png", crop: { x: 11, y: 82, w: 1063, h: 197 } },
+    hover: { path: "ui/button_hover.png", crop: { x: 16, y: 72, w: 1056, h: 217 } },
+    disabled: { path: "ui/button_disabled.png", crop: { x: 13, y: 72, w: 1058, h: 218 } },
   } as Record<ButtonState, { path: string; crop: { x: number; y: number; w: number; h: number } }>,
   buttonHeight: 128,
   slice: { x: 0.38, y: 0.32 },
@@ -141,11 +141,11 @@ export const UI_ART = {
    * градусы; size — высота картинки на экране, px. Щит — отдельно (cursorShield): отбивает всей областью.
    */
   cursorWeapons: {
-    steel_sword: { tip: { x: 0.49, y: 0.02 }, bladeEnd: { x: 0.5, y: 0.72 }, grip: { x: 0.5, y: 0.83 }, angle: -40, size: 150 },
-    silver_dagger: { tip: { x: 0.5, y: 0.04 }, bladeEnd: { x: 0.5, y: 0.53 }, grip: { x: 0.5, y: 0.78 }, angle: -40, size: 110 },
-    torch: { tip: { x: 0.4, y: 0.03 }, bladeEnd: { x: 0.47, y: 0.97 }, grip: { x: 0.47, y: 0.85 }, angle: -35, size: 140 },
-    cursed_axe: { tip: { x: 0.06, y: 0.42 }, bladeEnd: { x: 0.5, y: 0.7 }, grip: { x: 0.86, y: 0.78 }, angle: 0, size: 150 },
-    rusty_sickle: { tip: { x: 0.12, y: 0.04 }, bladeEnd: { x: 0.55, y: 0.6 }, grip: { x: 0.42, y: 0.86 }, angle: -20, size: 130 },
+    steel_sword: { tip: { x: 0.52, y: 0.03 }, bladeEnd: { x: 0.53, y: 0.72 }, grip: { x: 0.53, y: 0.83 }, angle: -40, size: 150 },
+    silver_dagger: { tip: { x: 0.50, y: 0.05 }, bladeEnd: { x: 0.50, y: 0.53 }, grip: { x: 0.50, y: 0.78 }, angle: -40, size: 110 },
+    torch: { tip: { x: 0.27, y: 0.04 }, bladeEnd: { x: 0.43, y: 0.96 }, grip: { x: 0.43, y: 0.85 }, angle: -35, size: 140 },
+    cursed_axe: { tip: { x: 0.06, y: 0.43 }, bladeEnd: { x: 0.50, y: 0.72 }, grip: { x: 0.87, y: 0.80 }, angle: 0, size: 150 },
+    rusty_sickle: { tip: { x: 0.13, y: 0.05 }, bladeEnd: { x: 0.55, y: 0.60 }, grip: { x: 0.42, y: 0.86 }, angle: -20, size: 130 },
   } as Partial<Record<ItemId, CursorBlade>>,
   /**
    * Щит-курсор (предмет с parryShield в рюкзаке): картинка предмета, центр — на курсоре. Размер — FEEL.parry.shieldSize,
@@ -154,8 +154,8 @@ export const UI_ART = {
   cursorShield: { hitShare: 0.9 },
   /** Значки: сердце (жизнь есть / потеряна) и монета. crop — без прозрачных полей; Boot уменьшает до iconHeight px. */
   icons: {
-    heart_full: { path: "ui/heart_full.png", crop: { x: 100, y: 160, w: 1036, h: 986 } },
-    heart_broken: { path: "ui/heart_broken.png", crop: { x: 64, y: 96, w: 1116, h: 1060 } },
+    heart_full: { path: "ui/heart_full.png", crop: { x: 25, y: 40, w: 259, h: 246 } },
+    heart_broken: { path: "ui/heart_broken.png", crop: { x: 16, y: 24, w: 279, h: 265 } },
     coin: { path: "ui/coin.png", crop: { x: 0, y: 0, w: 60, h: 64 } },
   } as Record<UiIconId, { path: string; crop: { x: number; y: number; w: number; h: number } }>,
   iconHeight: 96,
@@ -165,7 +165,7 @@ export const UI_ART = {
    * Карточка товара в магазине: plain — обычный предмет, rare — редкий и особый (вместо синей рамки). Boot уменьшает
    * картинку целиком до w×h. Раскладка внутри (px карточки) — под нарисованное: pad — поле значка типа и формы от угла,
    * iconY / iconSize — центр и размер картинки предмета, nameY — центр имени, pillsY — верх плашек тегов,
-   * chipsY / chipH — первый ряд характеристик: ровно в двух нарисованных ячейках (там свой фон не рисуется), следующие ряды — ниже.
+   * chipsY / chipH — первый ряд характеристик и высота плашки (у каждой характеристики своя плашка: значок + число).
    * Нет картинки — карточка рисуется кодом с раскладкой fallback.
    */
   // Название, теги (pillsY) и характеристики (chipsY) у обычной и редкой карточки на одной высоте; картинка с клетками — над
@@ -174,8 +174,8 @@ export const UI_ART = {
   shopCard: {
     w: 320,
     h: 422,
-    plain: { path: "ui/shop_card.webp", pad: 24, iconY: 112, iconSize: 136, nameY: 192, pillsY: 215, chipsY: 253, chipH: 40, slotRows: 2 },
-    rare: { path: "ui/shop_card_rare.webp", pad: 30, iconY: 112, iconSize: 136, nameY: 192, pillsY: 215, chipsY: 253, chipH: 40, slotRows: 1 },
+    plain: { path: "ui/shop_card.webp", pad: 24, iconY: 110, iconSize: 150, nameY: 206, pillsY: 229, chipsY: 270, chipH: 36, slotRows: 0 },
+    rare: { path: "ui/shop_card_rare.webp", pad: 30, iconY: 110, iconSize: 150, nameY: 206, pillsY: 229, chipsY: 270, chipH: 36, slotRows: 0 },
     fallback: { pad: 16, iconY: 100, iconSize: 150, nameY: 192, pillsY: 222, chipsY: 266, chipH: 44, slotRows: 0 },
   },
 };
@@ -295,6 +295,8 @@ export const HOME_LAYOUT = {
    * null — скруглённый прямоугольник window. Для фона home_v2.webp есть готовая: { path: "ui/home_window_mask.png", x: 906, y: 300 }.
    */
   windowMask: null as { path: string; x: number; y: number } | null,
+  /** Есть рамка окошка (bg_house_door_frame.png): портрет обрезается по рамке, отступив внутрь на столько px. */
+  windowInset: 8,
   /** Сдвиг портрета внутри окошка по вертикали (px): больше — портрет ниже, видно больше макушки. */
   portraitOffsetY: 0,
   /** Ширина портрета в окошке (px); высота — по пропорциям портрета 512×640. */
@@ -317,9 +319,58 @@ export const HOME_LAYOUT = {
   shop: { x: 89, y: 637, w: 596, h: 389 },
   /** Седельные сумки на крюке — кнопка «Сумки». */
   bags: { x: 1705, y: 295, w: 167, h: 497 },
+  /**
+   * Подписи «МАГАЗИН», «СУМКИ», «НА ОХОТУ» (макет художницы): центр надписи; без подложки, светлый текст с обводкой
+   * и тенью. Нет записи — внизу зоны предмета.
+   */
+  labels: {
+    shop: { x: 364, y: 929 },
+    bags: { x: 1780, y: 842 },
+    /** По центру полотна двери (вырезка ui/home_door.png), у нижнего края. */
+    door: { x: 954, y: 945 },
+  } as Partial<Record<"shop" | "bags" | "door", { x: number; y: number }>>,
+  labelSize: 43,
+  labelColor: "#b7a58a",
+  /**
+   * Вырезанные с фона предметы (художница): при наведении светятся по контуру (FEEL.homeGlow), клик — по силуэту.
+   * x, y — левый верхний угол вырезки в пикселях картинки фона дома (2560×1440). Нет записи или файла — прямоугольная рамка.
+   */
+  cutouts: {
+    shop: { path: "ui/home_chest.png", x: 147, y: 869 },
+    bags: { path: "ui/home_bags.png", x: 2240, y: 431 },
+    /** Полотно двери с петлями и засовом (вырезка художницы); depth 3 — под окошком и портретом. */
+    door: { path: "ui/home_door.png", x: 1030, y: 263, depth: 3 },
+  } as Partial<
+    Record<"shop" | "bags" | "door", { path: string; x: number; y: number; depth?: number }>
+  >,
   /** Доска «Заказы на сегодня» — тёмная внутренняя часть доски на фоне (без рамки). */
   board: { x: 137, y: 184, w: 508, h: 415 },
 };
+
+/**
+ * Шапка экранов по макету художницы (addHeader): центр строки по вертикали, высота доски, кегли.
+ * Слева «НОЧЬ 1/5» и «УРОВЕНЬ 1» (слово — цвет text, число — num), по центру заголовок капителью с ромбами,
+ * справа монета и число монет.
+ */
+export const HEADER_ART = {
+  y: 40,
+  barH: 80,
+  nightX: 39,
+  levelX: 264,
+  labelSize: 34,
+  titleSize: 44,
+  titleSmall: 33,
+  /** Заголовок по центру выше строки y на столько px. */
+  titleUp: 3,
+  coinSize: 36,
+  coinIcon: 44,
+  coinRight: 1856,
+  text: "#b7a58a",
+  num: "#ce6a82",
+  diamondGap: 22,
+};
+
+export const homeCutoutKey = (id: string) => `home_cutout_${id}`;
 
 /** Верхняя панель (addHeader): кнопка «Без звука» — центр и размер. */
 export const HEADER_LAYOUT = {
@@ -341,6 +392,29 @@ export const MENU_LAYOUT = {
   /** Кнопка «Быстрый бой» и окно выбора: ночь (кнопки 1–5) и враг (портреты в ряд), кнопка «Закрыть». */
   quickFight: { x: 956, y: 780, w: 387, h: 70 },
   quickPanel: { x: 960, y: 560, w: 1240, h: 640, portrait: 170, nightBtn: 70 },
+  /**
+   * Окно «Быстрый бой» по макету художницы: рамка портрета (frameW×frameH, портрет под ней — portrait×1.25),
+   * кегли и цвета надписей (заголовок — первая буква titleSize, остальное titleSmall, капителью).
+   */
+  quickArt: {
+    frameW: 184,
+    frameH: 227,
+    titleSize: 46,
+    titleSmall: 35,
+    subSize: 22,
+    nightSize: 32,
+    nameSize: 20,
+    subColor: "#a89a84",
+    diamondGap: 22,
+    /** Кнопка «Закрыть»: центр выше нижнего края окна на столько px. */
+    closeFromBottom: 82,
+    /** Имя врага: верх надписи ниже рамки портрета на столько px. */
+    nameGap: 6,
+    /** Центры по вертикали от верха окна: заголовок, подпись, ряд портретов. */
+    titleY: 62,
+    subY: 112,
+    portraitsY: 345,
+  },
 };
 
 /**
@@ -355,6 +429,16 @@ export const MENU_ART = {
   sliderTrack: { path: "ui/menu/slider_track.png" },
   sliderFill: { path: "ui/menu/slider_fill.png" },
   sliderEnds: { path: "ui/menu/slider_ends.png" },
+  /** Окно «Быстрый бой» (макет художницы): фон окна (растягивается на MENU_LAYOUT.quickPanel), рамка портрета
+   * (середина прозрачная, портрет под ней), ромбы слева и справа от заголовка. */
+  quickPanel: { path: "ui/quick_panel.png" },
+  portraitFrame: { path: "ui/portrait_frame.png" },
+  diamondLeft: { path: "ui/diamond_left.png" },
+  diamondRight: { path: "ui/diamond_right.png" },
+  /** Шапка экранов (макет художницы): доска на всю ширину экрана, без текста. Нет картинки — старая балка ui/header.png. */
+  headerBar: { path: "ui/header_bar.png" },
+  /** Траурная лента на портрет (экран поражения); нет файла — лента рисуется кодом. */
+  mourningRibbon: { path: "ui/mourning_ribbon.png" },
   /**
    * Глаза в лесу (вырезаны из варианта фона художницы): картинка и центр в пикселях исходного фона (2000×1125) —
    * в игре масштабируются вместе с фоном. Моргают и иногда пропадают (FEEL.menuLife.eyes).
@@ -386,8 +470,21 @@ export const MENU_ART = {
   buttonRefuseTextColor: "#ce6a82",
   /** Кегль надписи «НАЧАТЬ ОХОТУ», px экрана 1920×1080 (в макете 2560 px шириной это 72). */
   startFont: 54,
+  /** Кегль надписи «БЫСТРЫЙ БОЙ», px экрана 1920×1080. */
+  quickFightFont: 36,
 };
-export type MenuArtId = "button" | "logo" | "sliderTrack" | "sliderFill" | "sliderEnds";
+export type MenuArtId =
+  | "button"
+  | "logo"
+  | "sliderTrack"
+  | "sliderFill"
+  | "sliderEnds"
+  | "quickPanel"
+  | "portraitFrame"
+  | "diamondLeft"
+  | "diamondRight"
+  | "headerBar"
+  | "mourningRibbon";
 export const menuArtKey = (id: MenuArtId) => `ui_menu_${id}`;
 export const menuEyesKey = (n: number) => `ui_menu_eyes_${n}`;
 export const menuShardKey = (n: number) => `ui_menu_shard_${n}`;
@@ -433,7 +530,8 @@ export const BG_MENU_KEY = "bg_menu";
  * в масштабе scale, сбоку от окна с зазором gap.
  */
 export const ENEMY_TOOLTIP_LAYOUT = {
-  pad: 20,
+  /** Отступ содержимого от края окна — чтобы не наезжать на светлую рамку плашки. */
+  pad: 34,
   portraitW: 180,
   colGap: 28,
   cell: 60,
@@ -450,11 +548,11 @@ export const ENEMY_TOOLTIP_LAYOUT = {
  */
 export const HORSE_ART = {
   path: "backgrounds/horse.webp",
-  w: 1421,
-  h: 1107,
-  cellPx: 147,
-  gridX: 119.5,
-  gridY: 204.5,
+  w: 1232,
+  h: 1103,
+  cellPx: 145,
+  gridX: 40,
+  gridY: 42,
   /** Клетки поверх подложки: цвет и прозрачность заливки, цвет и прозрачность линий (0 — не видно, 1 — сплошные). */
   /** Заливка — основной фиолетово-серый, как у панелей (C.panel). */
   cellFillColor: 0x231f2b,
@@ -467,30 +565,48 @@ export const HORSE_ART = {
  * Итоги ночи: ширина панели; левая колонка — строки итогов (x и ширина переноса); правая — поверженные враги и журнал боя
  * (x, ширина, нижний край журнала, шрифт строк журнала).
  */
+/**
+ * Экран конца игры: фон итогов дня притушен на dim; справа — портрет Людьмака в рамке (центр и размер портрета),
+ * при поражении чёрно-белый с траурной лентой (offset — от угла до ленты, width — ширина ленты, overhang — насколько
+ * выходит за рамку; scale — масштаб картинки ленты художницы); слева — заголовок, текст и кнопка по центру колонки x.
+ */
+export const GAME_OVER_LAYOUT = {
+  dim: 0.5,
+  portrait: { x: 1340, y: 510, w: 480, h: 600 },
+  ribbon: { offset: 90, width: 46, overhang: 6, scale: 0.75 },
+  text: { x: 600, titleY: 375, titleBig: 104, titleSmall: 78, bodyY: 452, bodySize: 34, width: 760, buttonY: 645 },
+};
+
 export const RESULTS_LAYOUT = {
-  panelW: 1720,
-  panelH: 820,
-  panelY: 520,
-  titleY: 155,
-  outcomeY: 218,
-  leftX: 142,
-  leftW: 820,
-  rightX: 1015,
-  rightW: 760,
-  metricY: 264,
-  metricH: 120,
-  orderTitleY: 404,
-  orderY: 439,
-  orderH: 108,
-  orderGap: 8,
-  journalToggleY: 370,
-  logY: 424,
-  logBottom: 900,
-  logSize: 20,
-  logPadX: 18,
-  logPadY: 14,
-  /** Анимированная печать в правом нижнем углу пергамента. */
-  stamp: { x: 1690, y: 830, size: 180 },
+  /**
+   * Лист (пергамент карточки заказа, растянут): ширина; высота — по содержимому, не меньше minH и не больше maxH;
+   * bottomH — место внизу под журнал и печать; кнопка — ниже листа на buttonGap (центр). Лист с кнопкой — по центру экрана.
+   */
+  sheetW: 760,
+  minH: 640,
+  maxH: 900,
+  bottomH: 290,
+  buttonGap: 75,
+  padX: 72,
+  /** От верха листа: центр заголовка, центр строки исхода, верх списка заказов. */
+  titleY: 82,
+  titleSize: 52,
+  outcomeY: 142,
+  outcomeSize: 26,
+  listY: 185,
+  /** Высота строки заказа (без пометок). */
+  rowH: 82,
+  /** Добавка к строке, если под заказом есть пометки (кража, возврат аванса, бонус). */
+  noteH: 22,
+  /** Монеты: отступ от списка, кегль. */
+  moneyGap: 22,
+  moneySize: 32,
+  /** Ссылка «Журнал боя» — центр выше низа листа на столько px. */
+  journalFromBottom: 70,
+  /** Окно журнала: размер, поля. */
+  journal: { w: 1000, h: 760, pad: 70 },
+  /** Анимированная печать: размер и центр — левее и выше правого нижнего угла листа на dx, dy. */
+  stamp: { dx: 130, dy: 125, size: 200 },
 };
 
 /** Раскладка экрана рюкзака (редактирование). */
@@ -501,24 +617,32 @@ export const BACKPACK_LAYOUT = {
   grid: { x: 150, y: 260 },
   /**
    * Зона «вне сумок» — клетки поверх сундука на фоне backgrounds/backpack_room.webp — и размер клетки в ней
-   * (17 × 4 = 68 вещей на странице). Не влезло — вещи листаются страницами.
+   * (12 × 5 = 60 клеток на странице; сетка сама встаёт по центру зоны). Не влезло — вещи листаются страницами.
    */
-  stash: { x: 1125, y: 806, w: 765, h: 184, cell: 44 },
+  stash: { x: 1190, y: 608, w: 664, h: 282, cell: 54 },
   /** Поле «Основное оружие» — слева от верхнего ряда сумок (над левой сумкой): левый верхний угол, размер, подпись над ним. */
-  mainSlot: { x: 205, y: 300, size: 110, labelY: 282 },
-  /** Стрелки страниц «вне сумок» и номер страницы «1/2» — на крышке сундука, стрелки вплотную к цифрам. */
-  stashNav: { prevX: 1420, nextX: 1590, pageX: 1505, y: 700, w: 56, h: 40 },
-  /** Галочка «Скрыть эффекты соседства»: x — правый край подписи (у правого края сетки сумок), y — над верхним рядом сумок. */
-  hideLabels: { x: 1030, y: 240, size: 28 },
+  mainSlot: { x: 190, y: 292, size: 150, labelY: 272 },
+  /**
+   * Стрелки страниц «вне сумок» — слева и справа от сетки сундука, по середине её высоты, с зазором gap;
+   * номер страницы «1/2» — под сеткой (pageGap px от её низа). Места считаются от сетки сами.
+   */
+  stashNav: { w: 46, h: 96, gap: 12, pageGap: 18 },
+  /** Галочка «Скрыть эффекты соседства» — внизу панели «Сила снаряжения»: x — левый край квадратика, y — середина строки. */
+  hideLabels: { x: 1227, y: 494, size: 28 },
   /**
    * Пергамент: «Сила снаряжения», а при наведении на предмет — его описание. Текст тёмный (чернила).
    * Прямоугольник — чистая область пергамента на фоне.
    */
-  power: { x: 1182, y: 135, w: 595, h: 410 },
+  power: { x: 1211, y: 140, w: 622, h: 400 },
+  /** Панель (ui/quick_panel.png) под «Силой снаряжения» — поверх нарисованного на фоне пергамента. */
+  panel: { x: 1172, y: 100, w: 700, h: 462 },
   /** Подсказка управления — справа от кнопки «Вернуться», под сеткой сумок. */
-  hint: { x: 480, y: 903 },
-  /** Кнопка «Вернуться»: левый край по сетке сумок (150), низ по сетке сундука (990). */
-  home: { x: 300, y: 955, w: 300, h: 70 },
+  hint: { x: 400, y: 950 },
+  /**
+   * Кнопка «Вернуться» — на той же высоте и того же размера, что «ДОМОЙ →» в магазине (SHOP_LAYOUT.home),
+   * левый край — как у «Обновить ассортимент» (44 px): кнопки не прыгают между экранами.
+   */
+  home: { x: 204, y: 1016, w: 320, h: 70 },
 };
 
 /** Фон экрана рюкзака: стойло слева (под лошадь), пергамент и сундук справа. Зоны — в BACKPACK_LAYOUT. */
@@ -536,23 +660,31 @@ export const SHOP_LAYOUT = {
    * Карточки товаров на прилавке: левый верхний угол первой, масштаб картинки карточки (UI_ART.shopCard),
    * промежутки, сколько в ряду (неполный последний ряд — по центру).
    */
-  cards: { x: 44, y: 148, scale: 0.85, gapX: 20, gapY: 16, perRow: 3 },
+  cards: { x: 61, y: 172, scale: 0.85, gapX: 12, gapY: 16, perRow: 3 },
   /** Кнопка «Обновить ассортимент» (в дебаге — листание товаров): центр и размер. */
-  reroll: { x: 304, y: 1036, w: 520, h: 70 },
+  reroll: { x: 304, y: 1016, w: 520, h: 70 },
+  /**
+   * Торговец, вырезанный из фона отдельным слоем (ui/shop_merchant.png) — «дышит» поверх фона (FEEL.shop.merchant).
+   * x, y — левый верхний угол вырезки в пикселях фона 2560×1440 (на экране ×0,75). Нет файла — торговец просто на фоне.
+   */
+  merchantArt: { path: "ui/shop_merchant.png", x: 1071, y: 726 },
   /** Торговец — только на рисунке (заглушка рисует силуэт). */
-  merchant: { x: 900, y: 134, w: 316, h: 860 },
+  merchant: { x: 806, y: 540, w: 312, h: 540 },
   /** Мешок с твоими вещами: сюда отпускают товар, чтобы купить. */
   bag: { x: 1217, y: 280, w: 678, h: 752 },
-  /** Плитки вещей в мешке (2 в ряд — по ширине горловины): левый верхний угол первой, размер, промежуток, в ряду, рядов на странице. */
-  tiles: { x: 1364, y: 360, w: 220, h: 104, gap: 10, perRow: 2, rows: 5 },
+  /** Горловина мешка: внутри неё вещи лежат там, где их отпустили (покупка и перекладывание). */
+  bagArea: { x: 1285, y: 320, w: 510, h: 550 },
+  /** Вещи в мешке («стикеры»), места по умолчанию для вещей без своего места: левый верхний угол первого места, размер места, промежуток, в ряду, рядов на странице. */
+  tiles: { x: 1300, y: 330, w: 150, h: 130, gap: 0, perRow: 3, rows: 4 },
   /** Стрелки страниц вещей и номер страницы (по центру) — внизу мешка. */
   bagNav: { prevX: 1420, nextX: 1760, pageX: 1590, y: 960, w: 90, h: 44 },
   /** Кнопка «Домой →» — под мешком: центр и размер. */
-  home: { x: 1590, y: 1036, w: 520, h: 70 },
+  home: { x: 1738, y: 1016, w: 320, h: 70 },
 };
 
 /** Фон магазина: прилавок, торговец, мешок. Зоны — в SHOP_LAYOUT. */
 export const BG_SHOP_KEY = "bg_shop";
+export const SHOP_MERCHANT_KEY = "shop_merchant";
 
 /**
  * Раскладка экрана боя. Рюкзак героя (маска 8×5) и самая большая сумка врага должны помещаться без наложений:
@@ -581,7 +713,7 @@ export const BATTLE_LAYOUT = {
   /** Плашка условия заказчика («Заказ лешего: лес не жечь») — между полосками здоровья. */
   conditionBanner: { x: 960, y: 205 },
   /** Максимальная ширина плашки условия (px), чтобы не заезжать на полоски здоровья и значки блока рядом с ними; длиннее — шрифт меньше. */
-  conditionMaxW: 380,
+  conditionMaxW: 400,
   /** Значок модификатора врага — центр, относительно правого верхнего угла портрета врага. */
   modifierBadge: { dx: -26, dy: 26, r: 24 },
   /** Кнопка «Без звука» в верхней полосе боя. */
@@ -589,7 +721,7 @@ export const BATTLE_LAYOUT = {
   /** Кнопка «Ускорение ×1 / ×N» в верхней полосе боя, правее «Без звука». */
   speed: { x: 520, y: 40, w: 220, h: 50 },
   /** Дебаг-кнопка «Победить» — только в debug-режиме, правее «Ускорения». */
-  debugWin: { x: 780, y: 40, w: 190, h: 50 },
+  debugWin: { x: 960, y: 125, w: 190, h: 50 },
   /** Баннеры «Победа над …» и «Заказ выполнен» (центр по вертикали). */
   bannerY: 380,
   /** Нижний край подсказки о предмете (растёт вверх). */

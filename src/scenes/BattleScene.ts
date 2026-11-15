@@ -3,8 +3,8 @@
 // активные применяются нажатием на предмет. Справа — враг и его сумка (только просмотр).
 import * as Phaser from 'phaser';
 import { GridView } from '../components/GridView';
-import { BATTLE_LAYOUT, BG_BATTLE_KEY, enemyItemKey, enemyKey, HERO_KEY, HORSE_ART, itemKey, statIconKey, tagKey, uiIconKey, UI_ART, type CursorBlade } from '../config/assets';
-import { BATTLE_FAST_SPEED, ENEMY_PATTERN, PARRY_PERK } from '../config/balance';
+import { BATTLE_LAYOUT, BG_BATTLE_KEY, enemyItemKey, enemyKey, HEADER_ART, HERO_KEY, HORSE_ART, itemKey, MENU_ART, MENU_LAYOUT, menuArtKey, statIconKey, tagKey, uiIconKey, UI_ART, type CursorBlade } from '../config/assets';
+import { BATTLE_FAST_SPEED, ENEMY_PATTERN, NIGHTS, PARRY_PERK } from '../config/balance';
 import { CLIENTS } from '../data/clients';
 import { ENEMIES } from '../data/enemies';
 import { FEEL } from '../config/feel';
@@ -23,6 +23,10 @@ import {
   addHorse,
   addModifierBadge,
   addTopBar,
+  addHeaderPair,
+  addPanel,
+  addPanelText,
+  addPanelTitle,
   addText,
   Button,
   C,
@@ -64,13 +68,13 @@ export class BattleScene extends Phaser.Scene {
   private enemyView: GridView<EnemySlot> | null = null;
   private heroImg!: Phaser.GameObjects.Image;
   private enemyImg!: Phaser.GameObjects.Image;
-  private heroBar!: Phaser.GameObjects.Rectangle;
+  private heroBar!: (ratio: number) => void;
   /** Блок у полоски здоровья: жёлтая рамка и значок щита с числом — у героя справа, у врага слева. */
   private heroBlock!: BlockMark;
   private enemyBlock!: BlockMark;
   private heroHpText!: Phaser.GameObjects.Text;
   private heroStatus!: Phaser.GameObjects.Text;
-  private enemyBar!: Phaser.GameObjects.Rectangle;
+  private enemyBar!: (ratio: number) => void;
   private enemyHpText!: Phaser.GameObjects.Text;
   private enemyName!: Phaser.GameObjects.Text;
   private enemyStatus!: Phaser.GameObjects.Text;
@@ -144,6 +148,7 @@ export class BattleScene extends Phaser.Scene {
       ? new BattleSim({ items, chain: finalChain(), clients: [], night: run.night, heroHp: run.finalHp ?? undefined, mainUid, axeCharges: run.axeCharges, coins: run.coins })
       : new BattleSim({ items, chain: dayChain(), clients: run.accepted.map((c) => c.client), night: run.night, mainUid, coins: run.coins });
     this.speed = 1;
+    this.frames = [];
     this.shownStatus = 'fight';
     this.finished = false;
     this.overlay = null;
@@ -173,20 +178,56 @@ export class BattleScene extends Phaser.Scene {
 
     addBackground(this, BG_BATTLE_KEY);
     addTopBar(this);
-    addText(this, 30, 40, `Ночь ${run.night}`, 30).setOrigin(0, 0.5);
-    this.progressText = addText(this, W / 2, 40, '', 30).setOrigin(0.5);
+    const artHeader = this.textures.exists(menuArtKey('headerBar'));
+    if (artHeader) {
+      // Шапка по макету: «НОЧЬ 1/5», «УСКОРЕНИЕ ×1» (текстом, нажимается), по центру — ход заказа.
+      addHeaderPair(this, HEADER_ART.nightX, 'НОЧЬ', `${run.night}/${NIGHTS}`);
+      // Справа, на месте монет других экранов: правый край — HEADER_ART.coinRight.
+      const sp = addHeaderPair(this, 0, 'УСКОРЕНИЕ', '×1');
+      const shift = HEADER_ART.coinRight - (sp.value.x + sp.value.width);
+      sp.word.x += shift;
+      sp.value.x += shift;
+      const toggle = () => {
+        this.speed = this.speed === 1 ? BATTLE_FAST_SPEED : 1;
+        sp.value.setText(`×${this.speed}`);
+      };
+      for (const t of [sp.word, sp.value]) {
+        t.setInteractive({ useHandCursor: true });
+        t.on('pointerover', () => {
+          sfx(this, 'ui_hover');
+          sp.word.setColor(C.accent);
+        });
+        t.on('pointerout', () => sp.word.setColor(HEADER_ART.text));
+        t.on('pointerdown', (p: Phaser.Input.Pointer) => {
+          if (p.button !== 0) return;
+          sfx(this, 'ui_click');
+          toggle();
+        });
+      }
+      this.progressText = addText(this, W / 2, HEADER_ART.y, '', 30, HEADER_ART.text, { ...TITLE, stroke: '#000000', strokeThickness: 3 })
+        .setOrigin(0.5)
+        .setShadow(0, 3, '#000000', 0, true, true);
+    } else {
+      addText(this, 30, 40, `Ночь ${run.night}`, 30).setOrigin(0, 0.5);
+      this.progressText = addText(this, W / 2, 40, '', 30).setOrigin(0.5);
+    }
     // Условие заказчика текущего врага: меняется вместе с заказом.
+    // Без подложки — как остальные надписи: Kurale с тёмной обводкой и тенью.
     this.conditionText = addText(this, L.conditionBanner.x, L.conditionBanner.y, '', 24, C.accent, {
-      fontStyle: 'bold',
-      backgroundColor: 'rgba(0,0,0,0.7)',
-      padding: { x: 14, y: 6 },
-    }).setOrigin(0.5);
-    // Ускорение — в шапке.
-    const sp = L.speed;
-    const speedBtn = new Button(this, sp.x, sp.y, sp.w, sp.h, 'Ускорение ×1', () => {
-      this.speed = this.speed === 1 ? BATTLE_FAST_SPEED : 1;
-      speedBtn.setLabel(`Ускорение ×${this.speed}`);
-    }, 22);
+      ...TITLE,
+      stroke: '#000000',
+      strokeThickness: 5,
+    })
+      .setOrigin(0.5)
+      .setShadow(0, 3, '#000000', 0, true, true);
+    // Ускорение — в шапке (без картинки шапки — кнопкой).
+    if (!artHeader) {
+      const sp = L.speed;
+      const speedBtn = new Button(this, sp.x, sp.y, sp.w, sp.h, 'Ускорение ×1', () => {
+        this.speed = this.speed === 1 ? BATTLE_FAST_SPEED : 1;
+        speedBtn.setLabel(`Ускорение ×${this.speed}`);
+      }, 22);
+    }
     if (run.debug) {
       const win = L.debugWin;
       new Button(this, win.x, win.y, win.w, win.h, 'Победить', () => this.debugWin(), 22);
@@ -204,8 +245,9 @@ export class BattleScene extends Phaser.Scene {
     // Людьмак: портрет, справа от него имя, здоровье, статусы.
     const hp = L.heroPortrait;
     this.heroImg = fit(this.add.image(hp.x, hp.y, HERO_KEY), hp.w, hp.h);
+    this.framePortrait(this.heroImg);
     const hx = hp.x + hp.w / 2 + 30;
-    addText(this, hx, hp.y - 110, 'Людьмак', 36, C.accent, TITLE);
+    addText(this, hx, hp.y - 110, 'Людьмак', 36, C.accent, { ...TITLE, stroke: '#000000', strokeThickness: 4 }).setShadow(0, 3, '#000000', 0, true, true);
     [this.heroBar, this.heroHpText] = this.makeBar(hx, hp.y - 40);
     this.heroBlock = this.makeBlockMark(hx, hp.y - 40, 'right');
     // Дебафы героя — плашками-тегами со значком (медлительность от щитов), под ними — статусы текстом.
@@ -217,9 +259,12 @@ export class BattleScene extends Phaser.Scene {
     // Враг: портрет, слева от него имя, здоровье, статусы (выравнивание по правому краю).
     const ep = L.enemyPortrait;
     this.enemyImg = this.add.image(ep.x, ep.y, enemyKey(this.sim.enemy.id)).setDepth(2);
+    this.framePortrait(this.enemyImg);
     this.enemyDeck = [];
     const ex = ep.x - ep.w / 2 - 30;
-    this.enemyName = addText(this, ex, ep.y - 110, '', 36, C.bad, TITLE).setOrigin(1, 0);
+    this.enemyName = addText(this, ex, ep.y - 110, '', 36, C.bad, { ...TITLE, stroke: '#000000', strokeThickness: 4 })
+      .setOrigin(1, 0)
+      .setShadow(0, 3, '#000000', 0, true, true);
     [this.enemyBar, this.enemyHpText] = this.makeBar(ex - BAR_W, ep.y - 40);
     this.enemyBlock = this.makeBlockMark(ex - BAR_W, ep.y - 40, 'left');
     this.enemyStatus = addText(this, ex, ep.y, '', 24, C.block, { align: 'right' }).setOrigin(1, 0);
@@ -733,6 +778,7 @@ export class BattleScene extends Phaser.Scene {
     else {
       blade = this.bladeLine();
       this.spinSword();
+      sfx(this, 'sword_spin');
     }
     // Щит парирует всей областью: атака засчитана, если её круг касается круга щита.
     const shieldR = shield ? (FEEL.parry.shieldSize / 2) * UI_ART.cursorShield.hitShare : 0;
@@ -1080,7 +1126,7 @@ export class BattleScene extends Phaser.Scene {
       ease: 'Cubic.easeOut',
       onComplete: () => icon.cont.destroy(),
     });
-    sfx(this, 'parry');
+    sfx(this, icon.kind === 'sack' ? 'small_theft' : 'parry');
     this.sparks(x, y);
     this.floatWithIcon(x, y - P.size * 0.6, PARRY_TEXT[icon.kind] ?? 'Парировано!', C.accent, statIconKey('parry'), P.textSize);
   }
@@ -1171,11 +1217,60 @@ export class BattleScene extends Phaser.Scene {
     this.tweens.add({ targets: m.parts, alpha: on ? 1 : 0, duration: FEEL.blockMark.fadeMs });
   }
 
-  private makeBar(x: number, y: number): [Phaser.GameObjects.Rectangle, Phaser.GameObjects.Text] {
+  /**
+   * Полоска здоровья. Есть картинки ползунка громкости (MENU_ART: дорожка, заливка, ромбы) — в том же оформлении,
+   * число поверх с обводкой; нет — прямоугольники. Возвращает «выставить долю 0..1» и надпись.
+   */
+  private makeBar(x: number, y: number): [(ratio: number) => void, Phaser.GameObjects.Text] {
+    const art = this.textures.exists(menuArtKey('sliderTrack')) && this.textures.exists(menuArtKey('sliderFill'));
+    if (art) {
+      const track = this.add.image(x + BAR_W / 2, y, menuArtKey('sliderTrack'));
+      const k = BAR_W / track.width;
+      track.setScale(k);
+      const fill = this.add.image(0, y, menuArtKey('sliderFill')).setScale(k).setOrigin(0, 0.5);
+      fill.setX(x + (BAR_W - fill.width * k) / 2);
+      if (this.textures.exists(menuArtKey('sliderEnds'))) this.add.image(x + BAR_W / 2, y, menuArtKey('sliderEnds')).setScale(k);
+      const text = addText(this, x + BAR_W / 2, y - 1, '', 22, '#ece6d6', { ...TITLE, stroke: '#000000', strokeThickness: 5 })
+        .setOrigin(0.5)
+        .setShadow(0, 2, '#000000', 0, true, true);
+      return [(r: number) => fill.setCrop(0, 0, fill.width * Phaser.Math.Clamp(r, 0, 1), fill.height), text];
+    }
     this.add.rectangle(x, y, BAR_W, 34, 0x000000, 0.7).setOrigin(0, 0.5).setStrokeStyle(2, C.border);
     const bar = this.add.rectangle(x, y, BAR_W, 34, 0xb03a3a).setOrigin(0, 0.5);
     const text = addText(this, x + BAR_W / 2, y, '', 22).setOrigin(0.5);
-    return [bar, text];
+    return [(r: number) => (bar.width = BAR_W * Phaser.Math.Clamp(r, 0, 1)), text];
+  }
+
+  /** Рамки портретов (рамка художницы из «Быстрого боя»): двигаются, крутятся и темнеют вместе с портретом. */
+  private frames: { img: Phaser.GameObjects.Image; frame: Phaser.GameObjects.Image }[] = [];
+
+  private framePortrait(img: Phaser.GameObjects.Image): void {
+    if (!this.textures.exists(menuArtKey('portraitFrame'))) return;
+    const frame = this.add.image(img.x, img.y, menuArtKey('portraitFrame'));
+    this.frames.push({ img, frame });
+    this.syncFrames();
+  }
+
+  private syncFrames(): void {
+    const A = MENU_LAYOUT.quickArt;
+    const kw = A.frameW / MENU_LAYOUT.quickPanel.portrait;
+    this.frames = this.frames.filter(({ img, frame }) => {
+      if (!img.active) {
+        frame.destroy();
+        return false;
+      }
+      const w = img.displayWidth * kw;
+      frame
+        .setPosition(img.x, img.y)
+        .setAngle(img.angle)
+        .setAlpha(img.alpha)
+        .setVisible(img.visible)
+        .setDepth(img.depth + 0.005)
+        .setDisplaySize(w, (w * A.frameH) / A.frameW);
+      if (img.isTinted) frame.setTint(img.tintTopLeft);
+      else frame.clearTint();
+      return true;
+    });
   }
 
   /** Портрет, имя, заголовок и сумка текущего врага. Старая сумка уезжает, новая приезжает. */
@@ -1229,6 +1324,11 @@ export class BattleScene extends Phaser.Scene {
       cell: L.cell,
       mask: rectMask(def.bagCols, def.bagRows),
       mode: 'view',
+      // Клетки — как у рюкзака на лошади.
+      cellFillColor: HORSE_ART.cellFillColor,
+      cellFillAlpha: HORSE_ART.cellFillAlpha,
+      cellLineColor: HORSE_ART.cellLineColor,
+      cellLineAlpha: HORSE_ART.cellLineAlpha,
       items: () => sim.enemy.slots,
       shape: (s) => ({ w: s.def.w, h: s.def.h, key: enemyItemKey(s.def.id) }),
       describe: (s) => `${s.def.name}: ${describeEnemyItem(s.def.id, mod)}${s.boost ? ` · от подковы +${Math.round(s.boost * 100)}% (уже в уроне)` : ''}`,
@@ -1245,6 +1345,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    this.syncFrames();
     // Выстрел, от прицела которого отброшен курсор, случился — курсор сразу возвращается к мыши.
     if (this.kickAim !== null && !this.sim.pending.some((a) => a.id === this.kickAim)) {
       this.kickAim = null;
@@ -1310,6 +1411,7 @@ export class BattleScene extends Phaser.Scene {
   private banner(text: string, color: string, delay: number): void {
     const t = addText(this, L.centerX, L.bannerY, text, FEEL.banner.size, color, { ...TITLE, stroke: '#000', strokeThickness: 8 })
       .setOrigin(0.5)
+      .setShadow(0, 4, '#000000', 0, true, true)
       .setDepth(75)
       .setAlpha(0);
     const half = FEEL.banner.durationMs / 2;
@@ -1504,7 +1606,8 @@ export class BattleScene extends Phaser.Scene {
             true,
           );
           this.hitFx(this.heroImg, L.heroPortrait.x);
-          sfx(this, e.self ? 'self_damage' : 'hit_hero');
+          if (e.self) sfx(this, 'self_damage');
+          else if (e.parried === false) sfx(this, 'hit_enemy');
           if (!e.self && e.taken >= FEEL.shake.heroHitThreshold) this.shake(FEEL.shake.heroHitIntensity, FEEL.shake.heroHitMs);
         }
         else if (e.absorbed > 0) this.floatWithIcon(L.floatHeroX, L.floatY, `блок ${e.absorbed}`, F.block, statIconKey('block'));
@@ -1546,7 +1649,7 @@ export class BattleScene extends Phaser.Scene {
         break;
       case 'guardBroken':
         this.floatWithIcon(L.floatEnemyX, L.floatY + 60, 'щит сбит!', C.good, statIconKey('block'), 34);
-        sfx(this, 'block');
+        sfx(this, 'shield_brake');
         break;
       case 'guardUp':
         this.floatWithIcon(L.floatEnemyX, L.floatY + 60, 'щит поднят', C.dim, statIconKey('block'), 26);
@@ -1573,11 +1676,14 @@ export class BattleScene extends Phaser.Scene {
         break;
       case 'telegraph':
         // Крест проступает целиком; двойной удар копья — жёлтый отрезок с копьём.
-        if (e.kind === 'cross') this.telegraphCross(e.group, e.seconds);
-        else this.telegraph(e.group, e.seconds);
+        if (e.kind === 'cross') {
+          this.telegraphCross(e.group, e.seconds);
+          if (this.sim.enemy.id === 'monakh') sfx(this, 'monk_cross');
+        } else this.telegraph(e.group, e.seconds);
         break;
       case 'aim':
         this.spawnAim(e.id, e.seconds);
+        sfx(this, 'arstocrat_aim');
         break;
       // Соседство
       case 'burned':
@@ -1608,6 +1714,9 @@ export class BattleScene extends Phaser.Scene {
         break;
       case 'windup':
         this.spawnParryIcon(e);
+        if (e.kind === 'escape') sfx(this, 'big_theft');
+        else if (e.kind === 'aim') sfx(this, 'aristocrat_shot');
+        else if (e.kind === 'burst' && e.item === 'silver_rapier') sfx(this, 'rapier_hit');
         break;
       case 'strike':
         this.resolveParryIcon(e.id, e.parried);
@@ -1643,6 +1752,7 @@ export class BattleScene extends Phaser.Scene {
         .setAngle(D.angleDeg * n)
         .setTint(D.dark)
         .setDepth(1.9 - i * 0.01);
+      this.framePortrait(card);
       this.enemyDeck.push(card);
     });
   }
@@ -1682,10 +1792,11 @@ export class BattleScene extends Phaser.Scene {
     const next = sim.chain[defeated];
     sfx(this, 'rest');
     const box = this.add.container(L.centerX, 640).setDepth(80);
-    box.add(this.add.rectangle(0, 0, 680, 360, 0x000000, 0.88).setStrokeStyle(2, C.border));
-    box.add(addText(this, 0, -130, `Заказ выполнен (${defeated} из ${total})`, 34, C.good).setOrigin(0.5));
-    box.add(addText(this, 0, -80, 'Привал', 34, C.text, TITLE).setOrigin(0.5));
-    box.add(addText(this, 0, -36, `Дальше — заказ: ${CLIENTS[run.accepted[next.contract].client].name}.`, 24, C.text).setOrigin(0.5));
+    // Окно — как «Быстрый бой»: плашка художницы, заголовок капителью с ромбами, текст с обводкой.
+    box.add(addPanel(this, 0, 0, 720, 400));
+    box.add(addPanelTitle(this, 0, -138, 'Привал'));
+    box.add(addPanelText(this, 0, -80, `Заказ выполнен (${defeated} из ${total})`, 30, C.good, true));
+    box.add(addPanelText(this, 0, -36, `Дальше — заказ: ${CLIENTS[run.accepted[next.contract].client].name}.`, 24, MENU_ART.buttonTextColor));
     box.add(
       new Button(this, -160, 80, 290, 80, 'Дальше', () => {
         this.closeOverlay();
@@ -1702,7 +1813,7 @@ export class BattleScene extends Phaser.Scene {
     box.add(retreat);
     if (blockedBy) {
       const c = CLIENTS[blockedBy];
-      box.add(addText(this, 0, 145, `${c.name}: «${c.condition.title.toLowerCase()}» — заказ ещё не выполнен`, 22, C.bad).setOrigin(0.5));
+      box.add(addPanelText(this, 0, 148, `${c.name}: «${c.condition.title.toLowerCase()}» — заказ ещё не выполнен`, 20, C.bad));
     }
     this.overlay = box;
   }
@@ -1735,9 +1846,7 @@ export class BattleScene extends Phaser.Scene {
     resolveFinal(won);
     const name = ENEMIES[this.sim.enemy.id].name.toLowerCase();
     const message = won ? `${name[0].toUpperCase()}${name.slice(1)} повержен` : 'Людьмак пал в бою';
-    addText(this, L.centerX, 640, message, 60, won ? C.good : C.accent, { ...TITLE, stroke: '#000', strokeThickness: 8 })
-      .setOrigin(0.5)
-      .setDepth(90);
+    this.endMessage(message, won ? C.good : C.accent);
     this.time.delayedCall(1800, () => goto(this, won ? 'Home' : 'GameOver'));
   }
 
@@ -1747,20 +1856,24 @@ export class BattleScene extends Phaser.Scene {
     this.refresh();
     if (run.quickFight) return this.finishQuick(outcome.kind === 'win' ? 'Победа' : message);
     run.axeCharges = this.sim.axeCharges;
-    addText(this, L.centerX, 640, message, 60, C.accent, { ...TITLE, stroke: '#000', strokeThickness: 8 })
-      .setOrigin(0.5)
-      .setDepth(90);
+    this.endMessage(message, C.accent);
     this.time.delayedCall(1500, () => {
       resolveNight(outcome);
       goto(this, 'Results');
     });
   }
 
+  /** Итоговая надпись боя («Все заказы выполнены», «Людьмак пал в бою»…): Kurale с тёмной обводкой и тенью. */
+  private endMessage(message: string, color: string): void {
+    addText(this, L.centerX, 640, message, 60, color, { ...TITLE, stroke: '#000', strokeThickness: 8 })
+      .setOrigin(0.5)
+      .setShadow(0, 4, '#000000', 0, true, true)
+      .setDepth(90);
+  }
+
   /** Быстрый бой из меню закончился: надпись — и обратно в меню, без итогов, жизней и наград. */
   private finishQuick(message: string): void {
-    addText(this, L.centerX, 640, message, 60, C.accent, { ...TITLE, stroke: '#000', strokeThickness: 8 })
-      .setOrigin(0.5)
-      .setDepth(90);
+    this.endMessage(message, C.accent);
     this.time.delayedCall(1500, () => goto(this, 'Menu'));
   }
 
@@ -1778,10 +1891,12 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /** Длинное условие («чтобы никто не услышал») не должно заезжать на полоски здоровья: уменьшаем шрифт. */
+  /** Условие заказа: длинное переносится на вторую строку (а не мельчает); не влезло и в две — чуть меньше шрифт. */
   private setConditionText(text: string): void {
     if (this.conditionText.text === text) return;
-    this.conditionText.setFontSize(24).setText(text);
-    if (this.conditionText.width > L.conditionMaxW) this.conditionText.setFontSize(Math.floor((24 * L.conditionMaxW) / this.conditionText.width));
+    const t = this.conditionText.setWordWrapWidth(L.conditionMaxW).setAlign('center').setFontSize(24).setText(text);
+    let size = 24;
+    while (t.getWrappedText(text).length > 2 && size > 18) t.setFontSize(--size);
   }
 
   /** Плашки дебафов героя под полоской здоровья; статусы текстом сдвигаются под них. */
@@ -1831,7 +1946,7 @@ export class BattleScene extends Phaser.Scene {
     const sim = this.sim;
     this.syncDebuffs();
     this.setConditionText(this.conditionLine());
-    this.heroBar.width = (BAR_W * sim.heroHp) / sim.heroMaxHp;
+    this.heroBar(sim.heroHp / sim.heroMaxHp);
     this.setBlockMark(this.heroBlock, sim.block);
     this.heroHpText.setText(`${sim.heroHp} / ${sim.heroMaxHp}`);
     const status: string[] = [];
@@ -1850,7 +1965,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const e = sim.enemy;
-    this.enemyBar.width = (BAR_W * e.hp) / e.maxHp;
+    this.enemyBar(e.hp / e.maxHp);
     this.setBlockMark(this.enemyBlock, e.block);
     this.enemyHpText.setText(`${e.hp} / ${e.maxHp}`);
     const es: string[] = [];
@@ -1890,11 +2005,12 @@ export class BattleScene extends Phaser.Scene {
 
   private floatText(x: number, y: number, str: string, color: string, size = FEEL.float.size): Phaser.GameObjects.Text {
     const t = addText(this, x + Phaser.Math.Between(-40, 40), y, str, size, color, {
-      fontStyle: 'bold',
+      ...TITLE,
       stroke: '#000',
       strokeThickness: 6,
     })
       .setOrigin(0.5)
+      .setShadow(0, 3, '#000000', 0, true, true)
       .setDepth(60);
     this.tweens.add({ targets: t, y: y - FEEL.float.rise, alpha: 0, duration: FEEL.float.durationMs, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
     return t;

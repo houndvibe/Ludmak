@@ -3,7 +3,7 @@
 // При наведении на предмет в сумке сбоку от окна появляется карточка предмета (как в магазине). Окно не пропадает,
 // пока мышь на строке врага или на самом окне, — так до предметов можно дотянуться. Размеры — ENEMY_TOOLTIP_LAYOUT.
 import * as Phaser from 'phaser';
-import { ENEMY_TOOLTIP_LAYOUT, enemyItemKey, enemyKey, UI_ART, uiShopCardKey } from '../config/assets';
+import { ENEMY_TOOLTIP_LAYOUT, enemyItemKey, enemyKey, HORSE_ART, MENU_ART, MENU_LAYOUT, menuArtKey, UI_ART, uiShopCardKey } from '../config/assets';
 import { ENEMY_ITEM_STATS, ENEMY_STATS } from '../config/balance';
 import { ENEMIES, type EnemyId } from '../data/enemies';
 import { ENEMY_CATEGORY_NAMES, ENEMY_ITEMS, type EnemyItemDef } from '../data/enemyItems';
@@ -58,7 +58,14 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
     let y = L.pad;
 
     // Имя по центру, под ним модификатор.
-    const name = addText(s, w / 2, y, enemyName(enemy, mod), 28, C.bad, { ...TITLE, align: 'center', wordWrap: { width: w - 2 * L.pad } });
+    // Имя — как заголовки окон художницы: светлый Kurale с тёмной обводкой и тенью.
+    const name = addText(s, w / 2, y, enemyName(enemy, mod), 28, MENU_ART.buttonTextColor, {
+      ...TITLE,
+      align: 'center',
+      wordWrap: { width: w - 2 * L.pad },
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setShadow(0, 3, '#000000', 0, true, true);
     this.add(name.setOrigin(0.5, 0));
     y += name.height + 6;
     if (mod) {
@@ -84,17 +91,43 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
     const ph = Math.round(pw * 1.25);
     this.add(s.add.rectangle(L.pad, bodyY, pw, ph, 0x000000, 0.5).setOrigin(0).setStrokeStyle(2, C.border));
     this.add(fit(s.add.image(L.pad + pw / 2, bodyY + ph / 2, enemyKey(enemy)), pw - 4, ph - 4));
+    // Рамка портрета художницы (как в окне «Быстрый бой») — поверх портрета, прикрывает края.
+    if (s.textures.exists(menuArtKey('portraitFrame'))) {
+      const A = MENU_LAYOUT.quickArt;
+      const fw = pw * (A.frameW / MENU_LAYOUT.quickPanel.portrait);
+      this.add(s.add.image(L.pad + pw / 2, bodyY + ph / 2, menuArtKey('portraitFrame')).setDisplaySize(fw, fw * (A.frameH / A.frameW)));
+    }
     const hp = Math.round(ENEMY_STATS[enemy].hp * enemyPower(run.night, mod));
     const barY = bodyY + ph + 12 + L.hpH / 2;
-    this.add(s.add.rectangle(L.pad, barY, pw, L.hpH, 0x000000, 0.7).setOrigin(0, 0.5).setStrokeStyle(2, C.border));
-    this.add(s.add.rectangle(L.pad, barY, pw, L.hpH, 0xb03a3a).setOrigin(0, 0.5));
-    this.add(addText(s, L.pad + pw / 2, barY, `${hp} / ${hp}`, 20).setOrigin(0.5));
+    if (s.textures.exists(menuArtKey('sliderTrack')) && s.textures.exists(menuArtKey('sliderFill'))) {
+      // Здоровье — в оформлении ползунка громкости (дорожка, заливка, ромбы), число поверх с обводкой.
+      const track = s.add.image(L.pad + pw / 2, barY, menuArtKey('sliderTrack'));
+      const k = pw / track.width;
+      track.setScale(k);
+      const fill = s.add.image(0, barY, menuArtKey('sliderFill')).setScale(k).setOrigin(0, 0.5);
+      fill.setX(L.pad + (pw - fill.width * k) / 2);
+      this.add([track, fill]);
+      if (s.textures.exists(menuArtKey('sliderEnds'))) this.add(s.add.image(L.pad + pw / 2, barY, menuArtKey('sliderEnds')).setScale(k));
+      this.add(
+        addText(s, L.pad + pw / 2, barY - 1, `${hp} / ${hp}`, 20, '#ece6d6', { ...TITLE, stroke: '#000000', strokeThickness: 4 })
+          .setOrigin(0.5)
+          .setShadow(0, 2, '#000000', 0, true, true),
+      );
+    } else {
+      this.add(s.add.rectangle(L.pad, barY, pw, L.hpH, 0x000000, 0.7).setOrigin(0, 0.5).setStrokeStyle(2, C.border));
+      this.add(s.add.rectangle(L.pad, barY, pw, L.hpH, 0xb03a3a).setOrigin(0, 0.5));
+      this.add(addText(s, L.pad + pw / 2, barY, `${hp} / ${hp}`, 20).setOrigin(0.5));
+    }
     const leftH = ph + 12 + L.hpH;
 
     // Справа — сумка. Наведение на предмет — карточка предмета сбоку от окна.
     const colX = L.pad + pw + L.colGap;
     const colW = w - L.pad - colX;
-    this.add(addText(s, colX + colW / 2, bodyY, 'Сумка', 20, C.dim).setOrigin(0.5, 0));
+    this.add(
+      addText(s, colX + colW / 2, bodyY, 'Сумка', 22, MENU_ART.buttonTextColor, { ...TITLE, stroke: '#000000', strokeThickness: 3 })
+        .setOrigin(0.5, 0)
+        .setShadow(0, 2, '#000000', 0, true, true),
+    );
     const card = s.add.container(0, 0).setVisible(false);
     // Карточка: наведение на предмет — показать; ушла мышь — подождать FEEL.enemyCardKeepMs (успеть дойти до карточки);
     // пока мышь на карточке или снова на предмете — не прятать.
@@ -149,6 +182,11 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
       cell: L.cell,
       mask: rectMask(def.bagCols, def.bagRows),
       mode: 'view',
+      // Клетки — как у рюкзака на лошади.
+      cellFillColor: HORSE_ART.cellFillColor,
+      cellFillAlpha: HORSE_ART.cellFillAlpha,
+      cellLineColor: HORSE_ART.cellLineColor,
+      cellLineAlpha: HORSE_ART.cellLineAlpha,
       items: () => pieces,
       shape: (p) => ({ w: p.def.w, h: p.def.h, key: enemyItemKey(p.def.id) }),
       describe: (p) => p.def.name,
@@ -162,8 +200,23 @@ export class EnemyTooltip extends Phaser.GameObjects.Container {
 
     // Фон — позади всего; окно сразу под строкой врага (не влезает — над ней).
     // Фон интерактивный: ловит мышь, поэтому строки врагов под окном не срабатывают, пока курсор над окном.
-    const bg = s.add.rectangle(0, 0, w, height, 0x0c0a10, 0.97).setOrigin(0).setStrokeStyle(2, C.border).setInteractive();
+    // Фон окна — плашка художницы (ui/quick_panel.png) девятью кусками: углы и рамка не тянутся.
+    const panel = s.textures.exists(menuArtKey('quickPanel'));
+    const bg = s.add
+      .rectangle(0, 0, w, height, 0x0c0a10, panel ? 0.001 : 0.97)
+      .setOrigin(0)
+      .setStrokeStyle(panel ? 0 : 2, C.border)
+      .setInteractive();
     this.add(bg);
+    if (panel) {
+      const k = 0.75;
+      const plate = s.add
+        .nineslice(0, 0, menuArtKey('quickPanel'), undefined, w / k, height / k, 70, 70, 70, 70)
+        .setOrigin(0)
+        .setScale(k);
+      this.add(plate);
+      this.sendToBack(plate);
+    }
     this.sendToBack(bg);
     const x = Phaser.Math.Clamp(anchor.x, 10, W - w - 10);
     let top = anchor.y + anchor.h;

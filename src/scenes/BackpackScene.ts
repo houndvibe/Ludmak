@@ -2,7 +2,7 @@
 // Соседство: метки при перетаскивании, серые отключённые предметы, панель «Сила снаряжения».
 // Слияние: предмет, отпущенный на такой же предмет того же уровня, становится ★2 / ★3.
 import * as Phaser from 'phaser';
-import { BACKPACK_LAYOUT, BG_BACKPACK_KEY, categoryKey, HORSE_ART, itemKey, statIconKey, tagKey, type StatIconId } from '../config/assets';
+import { BACKPACK_LAYOUT, BG_BACKPACK_KEY, categoryKey, HORSE_ART, itemKey, MENU_ART, statIconKey, tagKey, type StatIconId } from '../config/assets';
 import { FEEL } from '../config/feel';
 import { GridView, type GridLabel, type GridLabels } from '../components/GridView';
 import { CATEGORY_NAMES, ITEMS } from '../data/items';
@@ -15,6 +15,7 @@ import {
   addBackground,
   addHeader,
   addHorse,
+  addPanel,
   addText,
   Button,
   C,
@@ -41,6 +42,9 @@ interface PanelChip {
 }
 
 /** Размеры плашек и подсказки на пергаменте. */
+/** Текст на тёмной панели «Сила снаряжения»: заголовок бежевым Kurale с обводкой и тенью, второстепенное — приглушённым. */
+const INK = { title: MENU_ART.buttonTextColor, dim: '#a89a84' };
+const PANEL_TITLE = { ...TITLE, stroke: '#000000', strokeThickness: 3, shadow: { offsetX: 0, offsetY: 2, color: '#000000', blur: 0, fill: true, stroke: true } };
 const PANEL = { pad: 16, chipH: 38, chipIcon: 28, chipGap: 8, chipFont: 22, tipW: 440 };
 
 /** Галочка «Скрыть эффекты соседства» — запоминается в браузере. */
@@ -87,15 +91,17 @@ export class BackpackScene extends Phaser.Scene {
     addBackground(this, BG_BACKPACK_KEY);
     addHorse(this, L.grid.x, L.grid.y, L.cell);
     addHeader(this, 'Укладка рюкзака');
+    // Панель «Сила снаряжения» — наша плашка поверх пергамента на фоне.
+    addPanel(this, L.panel.x + L.panel.w / 2, L.panel.y + L.panel.h / 2, L.panel.w, L.panel.h);
     addText(
       this,
       L.hint.x,
       L.hint.y,
       'Перетаскивай мышью, ПКМ — повернуть.\nСоседи усиливают или портят друг друга.\nТакой же предмет поверх — слияние ★.',
       24,
-      C.text,
-      { backgroundColor: 'rgba(20,18,26,0.92)', padding: { x: 14, y: 10 }, lineSpacing: 6 },
-    );
+      MENU_ART.buttonTextColor,
+      { stroke: '#000000', strokeThickness: 4, lineSpacing: 6 },
+    ).setShadow(0, 2, '#000000', 0, true, true);
     this.mainSlot = this.add.container(0, 0).setDepth(11);
     this.mainGlow = null;
     this.addHideLabelsCheckbox();
@@ -104,9 +110,14 @@ export class BackpackScene extends Phaser.Scene {
     const s = L.stash;
     // Страницы «вне сумок»: стрелки видны, только когда вещей больше, чем влезает.
     const nav = L.stashNav;
-    const pageText = addText(this, nav.pageX, nav.y, '', 22, C.text, { stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5);
-    const prev = new Button(this, nav.prevX, nav.y, nav.w, nav.h, '◀', () => this.view.turnStashPage(-1), 24);
-    const next = new Button(this, nav.nextX, nav.y, nav.w, nav.h, '▶', () => this.view.turnStashPage(1), 24);
+    // Сетка сундука — по центру зоны stash (как в GridView): стрелки — по бокам от неё, номер страницы — под ней.
+    const sgW = Math.max(1, Math.floor((s.w - 8) / s.cell)) * s.cell;
+    const sgH = Math.max(1, Math.floor((s.h - 8) / s.cell)) * s.cell;
+    const sgCx = s.x + s.w / 2;
+    const sgCy = s.y + s.h / 2;
+    const pageText = addText(this, sgCx, sgCy + sgH / 2 + nav.pageGap, '', 22, MENU_ART.buttonTextColor, { ...TITLE, stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5, 0);
+    const prev = new Button(this, sgCx - sgW / 2 - nav.gap - nav.w / 2, sgCy, nav.w, nav.h, '◀', () => this.view.turnStashPage(-1), 24);
+    const next = new Button(this, sgCx + sgW / 2 + nav.gap + nav.w / 2, sgCy, nav.w, nav.h, '▶', () => this.view.turnStashPage(1), 24);
     const showPages = (page: number, count: number) => {
       const many = count > 1;
       pageText.setText(many ? `${page + 1}/${count}` : '');
@@ -243,10 +254,10 @@ export class BackpackScene extends Phaser.Scene {
     this.refresh();
 
     const home = L.home;
-    new Button(this, home.x, home.y, home.w, home.h, 'Вернуться', () => {
+    new Button(this, home.x, home.y, home.w, home.h, 'ВЕРНУТЬСЯ', () => {
       tutorialDone(this, 'bagsHome');
       goto(this, 'Home');
-    }, 24);
+    }, 32);
 
     // Обучение: сетка (перетащить, метки), панель «Сила снаряжения», кнопка «Домой».
     const grid = { x: L.grid.x, y: L.grid.y, w: gridW, h: gridH };
@@ -308,7 +319,7 @@ export class BackpackScene extends Phaser.Scene {
     const merged = mergedPreview(m.dragged, t);
     const d = ITEMS[t.id];
     const star = starOf(t);
-    const name = this.keep(addText(this, x + 40, r.y + 10, `${d.name}: ★${star} → ★${star + 1}`, 28, C.inkAccent, TITLE));
+    const name = this.keep(addText(this, x + 40, r.y + 10, `${d.name}: ★${star} → ★${star + 1}`, 28, INK.title, PANEL_TITLE));
     this.keep(fit(this.add.image(x + 16, name.y + name.height / 2, categoryKey(d.category)), 32, 32));
     const before = this.power.powers.get(t.uid)?.final ?? starStats(t.id, star);
     const after = computePower(this.mergedItems(m.dragged, t)).powers.get(t.uid)?.final ?? starStats(t.id, star + 1);
@@ -327,7 +338,7 @@ export class BackpackScene extends Phaser.Scene {
       };
     });
     const y = this.chipRow(r.y + 58, chips) + 10;
-    this.keep(addText(this, x, y, 'Отпусти — предметы сольются. С учётом соседей.', 20, C.inkDim, { wordWrap: { width: r.w - 2 * PANEL.pad } }));
+    this.keep(addText(this, x, y, 'Отпусти — предметы сольются. С учётом соседей.', 20, INK.dim, { wordWrap: { width: r.w - 2 * PANEL.pad } }));
   }
 
   /** Что изменится, если положить предмет сюда: метки над соседями и сводка над самим предметом. */
@@ -352,20 +363,23 @@ export class BackpackScene extends Phaser.Scene {
   private addHideLabelsCheckbox(): void {
     const r = BACKPACK_LAYOUT.hideLabels;
     hideSynergyLabels = loadHideLabels();
-    // Подпись прижата к правому краю (r.x — её правый край), квадратик — слева от неё; вся строка вровень с верхним рядом сумок.
-    const label = addText(this, r.x, r.y, 'Скрыть эффекты соседства', 24, C.text).setOrigin(1, 0.5);
-    const boxX = r.x - label.width - 12 - r.size / 2;
-    this.add.rectangle(boxX, r.y, r.size, r.size, 0x000000, 0.6).setStrokeStyle(2, C.border);
-    const mark = addText(this, boxX, r.y, '✔', Math.round(r.size * 0.8), C.accent, { fontStyle: 'bold' }).setOrigin(0.5);
+    // Строка внизу панели «Сила снаряжения»: квадратик слева (r.x — его левый край), подпись справа от него.
+    const ink = MENU_ART.buttonTextColor;
+    const boxX = r.x + r.size / 2;
+    this.add.rectangle(boxX, r.y, r.size, r.size, 0x0e0c12, 0.7).setStrokeStyle(2, 0xb7a58a, 0.8);
+    const mark = addText(this, boxX, r.y, '✔', Math.round(r.size * 0.75), ink, { fontStyle: 'bold' }).setOrigin(0.5);
+    const label = addText(this, r.x + r.size + 12, r.y, 'Скрыть эффекты соседства', 24, ink, { ...TITLE, stroke: '#000000', strokeThickness: 3 })
+      .setOrigin(0, 0.5)
+      .setShadow(0, 2, '#000000', 0, true, true);
     const show = () => mark.setVisible(hideSynergyLabels);
     show();
     // Нажимается и квадратик, и подпись.
     const hit = this.add
-      .rectangle(boxX - r.size / 2 - 6, r.y, r.size + 12 + 12 + label.width + 6, r.size + 12, 0xffffff, 0.001)
+      .rectangle(r.x - 6, r.y, r.size + 12 + label.width + 12, r.size + 12, 0xffffff, 0.001)
       .setOrigin(0, 0.5)
       .setInteractive({ useHandCursor: true });
-    hit.on('pointerover', () => label.setColor(C.accent));
-    hit.on('pointerout', () => label.setColor(C.text));
+    hit.on('pointerover', () => label.setColor('#e0b65a'));
+    hit.on('pointerout', () => label.setColor(ink));
     hit.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.button !== 0) return;
       hideSynergyLabels = !hideSynergyLabels;
@@ -414,13 +428,21 @@ export class BackpackScene extends Phaser.Scene {
     if (!item) setMain(null);
     // Нет основного — красная рамка и предупреждение: парировать нечем.
     const frame = this.add.rectangle(m.x, m.y, m.size, m.size, 0x000000, 0.55).setOrigin(0).setStrokeStyle(3, item ? 0xe0b65a : 0xe05050);
-    const label = addText(this, m.x + m.size / 2, m.labelY, 'Основное', 20, item ? C.accent : C.bad, { stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5);
+    const label = addText(this, m.x + m.size / 2, m.labelY, 'Основное', 24, item ? MENU_ART.buttonTextColor : C.bad, { ...TITLE, stroke: '#000000', strokeThickness: 4 })
+      .setOrigin(0.5)
+      .setShadow(0, 2, '#000000', 0, true, true);
     this.mainSlot.add([frame, label]);
     const hint = item
       ? `Основное оружие: ${ITEMS[item.id].name}. Это курсор в бою: им отбиваешь атаки. Сменить — двойной клик по другому оружию или щиту в сумках или перетащи его сюда. Убрать основное из сумок — оно перестанет быть основным.`
       : 'Нечем парировать! Основное оружие не выбрано — в бою не отбить ни одной атаки, курсора на поле не будет. Двойной клик по оружию или щиту в сумках или перетащи его сюда — сделать основным.';
     if (item) {
-      this.mainSlot.add(fit(this.add.image(m.x + m.size / 2, m.y + m.size / 2, itemKey(item.id)), m.size - 16, m.size - 16));
+      // Длинное оружие (меч, кинжал, факел) — по диагонали поля: так оно крупнее и лучше читается.
+      const img = this.add.image(m.x + m.size / 2, m.y + m.size / 2, itemKey(item.id));
+      const inner = m.size - 20;
+      if (img.height / img.width > 1.6) {
+        img.setScale((inner * 1.25) / img.height).setAngle(45);
+      } else fit(img, inner, inner);
+      this.mainSlot.add(img);
     } else {
       this.mainSlot.add(
         addText(this, m.x + m.size / 2, m.y + m.size / 2, 'Нечем\nпарировать', 20, C.bad, { fontStyle: 'bold', align: 'center', stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5),
@@ -498,7 +520,7 @@ export class BackpackScene extends Phaser.Scene {
         top += PANEL.chipH + PANEL.chipGap;
       }
       const mid = top + PANEL.chipH / 2;
-      const bg = this.keep(this.add.rectangle(x, top, w, PANEL.chipH, 0x2b1d12, 0.85).setOrigin(0));
+      const bg = this.keep(this.add.rectangle(x, top, w, PANEL.chipH, 0x0e0c12, 0.55).setOrigin(0).setStrokeStyle(1.5, 0xb7a58a, 0.35));
       let ix = x + 8;
       this.keep(fit(this.add.image(ix + PANEL.chipIcon / 2, mid, ch.icon), PANEL.chipIcon, PANEL.chipIcon));
       ix += PANEL.chipIcon + 4;
@@ -518,9 +540,9 @@ export class BackpackScene extends Phaser.Scene {
   private drawPower(): void {
     const r = BACKPACK_LAYOUT.power;
     const x = r.x + PANEL.pad;
-    this.keep(addText(this, x, r.y + 10, 'Сила снаряжения', 30, C.inkAccent, TITLE));
+    this.keep(addText(this, x, r.y + 10, 'Сила снаряжения', 30, INK.title, PANEL_TITLE));
     if (!run.items.some((i) => i.inGrid)) {
-      this.keep(addText(this, x, r.y + 60, 'Сумки пусты — положи сюда предметы.', 21, C.inkDim));
+      this.keep(addText(this, x, r.y + 60, 'Сумки пусты — положи сюда предметы.', 21, INK.dim));
       return;
     }
     const g = gearSummary(run.items, this.power);
@@ -543,7 +565,7 @@ export class BackpackScene extends Phaser.Scene {
     let y = this.chipRow(r.y + 58, chips) + 12;
     if (g.disabled.length) {
       const t = this.keep(
-        addText(this, x, y, `Отключены: ${g.disabled.map((id) => ITEMS[id].name).join(', ')}`, 21, C.inkBad, {
+        addText(this, x, y, `Отключены: ${g.disabled.map((id) => ITEMS[id].name).join(', ')}`, 21, C.bad, {
           fontStyle: 'bold',
           wordWrap: { width: r.w - 2 * PANEL.pad },
         }),
@@ -574,7 +596,7 @@ export class BackpackScene extends Phaser.Scene {
     const x = r.x + PANEL.pad;
     const d = ITEMS[it.id];
     const star = starOf(it);
-    const name = this.keep(addText(this, x + 40, r.y + 10, `${d.name}${star > 1 ? ` ★${star}` : ''}`, 28, C.inkAccent, TITLE));
+    const name = this.keep(addText(this, x + 40, r.y + 10, `${d.name}${star > 1 ? ` ★${star}` : ''}`, 28, INK.title, PANEL_TITLE));
     const cat = this.keep(fit(this.add.image(x + 16, name.y + name.height / 2, categoryKey(d.category)), 32, 32));
     this.withTip(cat, `Категория: ${CATEGORY_NAMES[d.category]}`);
 
@@ -604,15 +626,15 @@ export class BackpackScene extends Phaser.Scene {
       if (hint) this.withTip(t, hint);
       y += t.height + 4;
     };
-    if (!it.inGrid) return line('Вне сумок — в бою не участвует.', C.inkDim);
+    if (!it.inGrid) return line('Вне сумок — в бою не участвует.', INK.dim);
     if (!p) return;
     for (const e of p.received) {
       const src = run.items.find((i) => i.uid === e.source);
       const srcName = src ? ITEMS[src.id].name : '?';
-      line(`• ${srcName}: ${e.label}`, e.good ? C.inkGood : C.inkBad, `Соседство «${e.rule.title}» от предмета «${srcName}».`);
+      line(`• ${srcName}: ${e.label}`, e.good ? C.good : C.bad, `Соседство «${e.rule.title}» от предмета «${srcName}».`);
     }
-    if (p.blockedBy) line(`Отключён: ${p.blockedBy}`, C.inkBad, 'В бою этот предмет не сработает и не влияет на соседей.', true);
-    else if (p.disabled) line('Отключён соседом', C.inkBad, 'В бою этот предмет не сработает и не влияет на соседей. Кто мешает — в строках выше.', true);
-    if (p.poisoned) line('Отравлен: лечение ранит', C.inkBad, 'Лечение этого предмета не лечит, а ранит героя.', true);
+    if (p.blockedBy) line(`Отключён: ${p.blockedBy}`, C.bad, 'В бою этот предмет не сработает и не влияет на соседей.', true);
+    else if (p.disabled) line('Отключён соседом', C.bad, 'В бою этот предмет не сработает и не влияет на соседей. Кто мешает — в строках выше.', true);
+    if (p.poisoned) line('Отравлен: лечение ранит', C.bad, 'Лечение этого предмета не лечит, а ранит героя.', true);
   }
 }

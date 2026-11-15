@@ -8,6 +8,7 @@ import {
   HOME_FRAME_KEY,
   clientKey,
   HOME_LAYOUT,
+  homeCutoutKey,
   HOME_WINDOW_MASK_KEY,
   menuShardKey,
   MENU_ART,
@@ -44,6 +45,8 @@ import { EnemyTooltip } from "../components/EnemyTooltip";
 import { playMusic, sfx } from "../components/Sound";
 import {
   addBackground,
+  addPanel,
+  addPanelTitle,
   addChips,
   addEnemyLines,
   addHeader,
@@ -125,6 +128,24 @@ export class HomeScene extends Phaser.Scene {
       );
       mi.setOrigin(0).setScale(k);
       this.windowMask = mi.createBitmapMask();
+    } else if (this.textures.exists(HOME_FRAME_KEY)) {
+      // Есть рамка окошка: портрет обрезается прямоугольником чуть меньше рамки (край прячется под её бортиком),
+      // чтобы ни один пиксель не выглядывал за внешний край рамки.
+      const src = this.textures.get(HOME_FRAME_KEY).getSourceImage();
+      const k = Math.min(wnd.w / src.width, wnd.h / src.height);
+      const fw = src.width * k;
+      const fh = src.height * k;
+      const inset = L.windowInset;
+      const maskShape = this.make.graphics({}, false);
+      maskShape
+        .fillStyle(0xffffff)
+        .fillRect(
+          wnd.x + (wnd.w - fw) / 2 + inset,
+          wnd.y + (wnd.h - fh) / 2 + inset,
+          fw - 2 * inset,
+          fh - 2 * inset,
+        );
+      this.windowMask = maskShape.createGeometryMask();
     } else {
       const maskShape = this.make.graphics({}, false);
       maskShape
@@ -152,7 +173,9 @@ export class HomeScene extends Phaser.Scene {
     this.hotspots.push(
       this.makeHotspot(
         L.shop,
-        () => "Магазин",
+        "shop",
+        L.labels.shop,
+        () => "МАГАЗИН",
         () => {
           tutorialDone(this, "chest");
           goto(this, "Shop");
@@ -161,7 +184,9 @@ export class HomeScene extends Phaser.Scene {
       ),
       this.makeHotspot(
         L.bags,
-        () => "Сумки",
+        "bags",
+        L.labels.bags,
+        () => "СУМКИ",
         () => {
           tutorialDone(this, "bags");
           goto(this, "Backpack");
@@ -170,7 +195,9 @@ export class HomeScene extends Phaser.Scene {
       ),
       this.makeHotspot(
         L.door,
-        () => (run.accepted.length > 0 ? "На охоту" : "Переждать день"),
+        "door",
+        L.labels.door,
+        () => (run.accepted.length > 0 ? "НА ОХОТУ" : "ПЕРЕЖДАТЬ ДЕНЬ"),
         () => this.leaveHouse(),
         false,
       ),
@@ -360,19 +387,35 @@ export class HomeScene extends Phaser.Scene {
     this.shutter.setY(this.shutterY);
     this.setHotspotsEnabled(true);
     const n = run.accepted.length;
-    const text =
-      n > 0
-        ? `Очередь разошлась.\n\nЗаказов на день: ${n}.\nЗагляни в сундук, уложи сумки — и за дверь, на охоту.`
-        : "Очередь разошлась, а заказов нет.\n\nМожно заглянуть в сундук и переждать день за дверью.";
     this.card.removeAll(true);
     const r = HOME_LAYOUT.card;
     const p = this.cardPaper();
-    this.card.add(
-      addText(this, r.x + p.px, r.y + p.top, text, 26, p.ink.text, {
+    // Абзацы записки; «Заказов на день» — красным, как подпись в письме. Весь текст — по центру листа по вертикали.
+    const parts: { text: string; color: string; gap: number }[] =
+      n > 0
+        ? [
+            { text: "Очередь разошлась.", color: p.ink.text, gap: 0 },
+            { text: `Заказов на день: ${n}.`, color: p.ink.bad, gap: 30 },
+            { text: "Загляни в сундук, уложи сумки — и за дверь, на охоту.", color: p.ink.text, gap: 6 },
+          ]
+        : [
+            { text: "Очередь разошлась, а заказов нет.", color: p.ink.text, gap: 0 },
+            { text: "Можно заглянуть в сундук и переждать день за дверью.", color: p.ink.text, gap: 30 },
+          ];
+    const texts = parts.map((t) =>
+      addText(this, r.x + p.px, 0, t.text, 26, t.color, {
         wordWrap: { width: r.w - 2 * p.px },
         lineSpacing: 6,
       }),
     );
+    const blockH = texts.reduce((h, t, i) => h + t.height + parts[i].gap, 0);
+    let y = r.y + p.top + Math.max(0, (r.h - p.top - p.bottom - blockH) / 2);
+    texts.forEach((t, i) => {
+      y += parts[i].gap;
+      t.setY(y);
+      y += t.height;
+    });
+    this.card.add(texts);
     this.queueShown = true;
     tutorialRefresh(this);
   }
@@ -488,9 +531,19 @@ export class HomeScene extends Phaser.Scene {
       body.y + body.height + 14,
       WITCHER_LETTER.signature,
       Lt.size,
-      ink,
+      paper ? C.inkBad : C.bad,
       { fontStyle: "italic" },
     ).setOrigin(1, 0);
+    // Текст с подписью — по центру между заголовком и кнопкой «Прочитано».
+    {
+      const from = title.y + title.height;
+      const to = top + Lt.buttonY - 35;
+      const blockH = sign.y + sign.height - body.y;
+      const y0 = from + Math.max(18, (to - from - blockH) / 2);
+      const dy = y0 - body.y;
+      body.y += dy;
+      sign.y += dy;
+    }
     const btn = new Button(
       this,
       Lt.x,
@@ -1048,6 +1101,8 @@ export class HomeScene extends Phaser.Scene {
    */
   private makeHotspot(
     r: Rect,
+    id: "shop" | "bags" | "door",
+    labelAt: { x: number; y: number } | undefined,
     label: () => string,
     onClick: () => void,
     alwaysLabel: boolean,
@@ -1063,54 +1118,131 @@ export class HomeScene extends Phaser.Scene {
       .setOrigin(0)
       .setDepth(6);
     frame.setStrokeStyle(4, 0xe0b65a, 0);
-    const plate = this.add
-      .rectangle(
-        r.x + r.w / 2,
-        r.y + r.h - 40,
-        Math.min(r.w - 20, 300),
-        52,
-        0x000000,
-        0.7,
-      )
-      .setDepth(7);
-    const text = addText(this, plate.x, plate.y, label(), 30, C.text, TITLE)
+    // Вырезка предмета с фона (HOME_LAYOUT.cutouts): лежит ровно поверх фона, при наведении светится по контуру,
+    // клик — по силуэту. Нет вырезки — прямоугольная рамка frame.
+    const cut = HOME_LAYOUT.cutouts[id];
+    let cutout: Phaser.GameObjects.Image | null = null;
+    let glow: Phaser.GameObjects.Image | null = null;
+    if (cut && this.textures.exists(homeCutoutKey(id))) {
+      const bg = this.textures.get(BG_HOME_KEY).getSourceImage();
+      const k = Math.max(W / bg.width, H / bg.height);
+      const ox = W / 2 - (bg.width * k) / 2;
+      const oy = H / 2 - (bg.height * k) / 2;
+      cutout = this.add
+        .image(ox + cut.x * k, oy + cut.y * k, homeCutoutKey(id))
+        .setOrigin(0)
+        .setScale(k)
+        .setDepth(cut.depth ?? 5);
+      // Свечение — заранее нарисованный ореол по силуэту (тень холста), лежит под вырезкой и проявляется при наведении.
+      const g = this.glowTexture(homeCutoutKey(id));
+      glow = this.add
+        .image(ox + (cut.x - g.pad) * k, oy + (cut.y - g.pad) * k, g.key)
+        .setOrigin(0)
+        .setScale(k)
+        .setAlpha(0)
+        .setDepth((cut.depth ?? 5) - 0.01);
+    }
+    // Подпись по макету: без подложки, светлый Kurale с тёмной обводкой и тенью.
+    const LH = HOME_LAYOUT;
+    const text = addText(
+      this,
+      labelAt?.x ?? r.x + r.w / 2,
+      labelAt?.y ?? r.y + r.h - 40,
+      label(),
+      LH.labelSize,
+      LH.labelColor,
+      { ...TITLE, stroke: "#000000", strokeThickness: 5 },
+    )
       .setOrigin(0.5)
+      .setShadow(0, 4, "#000000", 0, true, true)
       .setDepth(8);
     const setHover = (on: boolean) => {
       shade.setVisible(!enabled);
-      frame.setStrokeStyle(4, 0xe0b65a, on && enabled ? 1 : 0);
-      frame.setFillStyle(0xffffff, on && enabled ? 0.06 : 0.001);
+      const lit = on && enabled;
+      if (cutout) {
+        if (glow) {
+          // Закрытая зона тоже светится при наведении, но слабее (рядом — подсказка, почему закрыто).
+          const G = FEEL.homeGlow;
+          this.tweens.killTweensOf(glow);
+          this.tweens.add({
+            targets: glow,
+            alpha: on ? (enabled ? 1 : G.disabledShare) : 0,
+            duration: G.fadeMs,
+          });
+        } else cutout.setTint(lit ? 0xfff0c8 : 0xffffff);
+      } else {
+        frame.setStrokeStyle(4, 0xe0b65a, lit ? 1 : 0);
+        frame.setFillStyle(0xffffff, lit ? 0.06 : 0.001);
+      }
       // Неактивная зона при наведении объясняет, почему она закрыта; подпись растягивается под текст.
       const busy = !enabled && on;
       text
         .setText(busy ? "Сначала разберись с заказами" : label())
-        .setFontSize(busy ? 22 : 28);
-      plate.setSize(Math.max(Math.min(r.w - 20, 300), text.width + 30), 52);
+        .setFontSize(busy ? 26 : LH.labelSize);
       const visible = alwaysLabel || on;
-      plate.setVisible(visible);
       text
         .setVisible(visible)
-        .setColor(enabled ? (on ? C.accent : C.text) : busy ? C.accent : C.dim);
+        .setColor(enabled ? (on ? C.accent : LH.labelColor) : busy ? C.accent : C.dim);
     };
-    frame.setInteractive({ useHandCursor: true });
-    frame.on("pointerover", () => {
-      setHover(true);
-      if (enabled) sfx(this, "ui_hover");
-    });
-    frame.on("pointerout", () => setHover(false));
-    frame.on("pointerdown", (p: Phaser.Input.Pointer) => {
-      if (!enabled || p.button !== 0) return;
-      sfx(this, "ui_click");
-      onClick();
-    });
+    // Зона нажатия: силуэт вырезки и подпись; без вырезки — прямоугольник зоны.
+    const targets: Phaser.GameObjects.GameObject[] = [];
+    if (cutout) {
+      cutout.setInteractive({ pixelPerfect: true, useHandCursor: true });
+      text.setInteractive({ useHandCursor: true });
+      targets.push(cutout, text);
+    } else {
+      frame.setInteractive({ useHandCursor: true });
+      targets.push(frame);
+    }
+    let inside = 0;
+    for (const t of targets) {
+      t.on("pointerover", () => {
+        if (inside++ === 0) {
+          setHover(true);
+          if (enabled) sfx(this, "ui_hover");
+        }
+      });
+      t.on("pointerout", () => {
+        inside = Math.max(0, inside - 1);
+        if (inside === 0) setHover(false);
+      });
+      t.on("pointerdown", (p: Phaser.Input.Pointer) => {
+        if (!enabled || p.button !== 0) return;
+        sfx(this, "ui_click");
+        onClick();
+      });
+    }
     setHover(false);
     return {
       setEnabled: (v: boolean) => {
         enabled = v;
-        if (frame.input) frame.input.cursor = v ? "pointer" : "default";
+        for (const t of targets) if (t.input) t.input.cursor = v ? "pointer" : "default";
         setHover(false);
       },
     };
+  }
+
+  /**
+   * Ореол по силуэту картинки (для подсветки при наведении): тень холста цвета FEEL.homeGlow без самой картинки,
+   * с полями pad вокруг. Строится один раз на ключ.
+   */
+  private glowTexture(src: string): { key: string; pad: number } {
+    const G = FEEL.homeGlow;
+    const key = `${src}_glow`;
+    const pad = G.blur * 2;
+    if (!this.textures.exists(key)) {
+      const img = this.textures.get(src).getSourceImage() as HTMLImageElement;
+      const tex = this.textures.createCanvas(key, img.width + pad * 2, img.height + pad * 2)!;
+      const ctx = tex.getContext();
+      // Картинку рисуем далеко за краем холста, а её тень сдвигаем обратно — на холсте остаётся только тень.
+      const away = img.width + pad * 4;
+      ctx.shadowColor = G.color;
+      ctx.shadowBlur = G.blur;
+      ctx.shadowOffsetX = away;
+      for (let i = 0; i < G.passes; i++) ctx.drawImage(img, pad - away, pad);
+      tex.refresh();
+    }
+    return { key, pad };
   }
 
   private setHotspotsEnabled(v: boolean): void {
@@ -1151,14 +1283,8 @@ export class HomeScene extends Phaser.Scene {
         .setOrigin(0)
         .setInteractive(),
     );
-    overlay.add(
-      this.add.rectangle(W / 2, H / 2, 760, 350, 0x211b1a, 0.98)
-        .setStrokeStyle(3, C.border),
-    );
-    overlay.add(
-      addText(this, W / 2, H / 2 - 105, "Нечем отбивать атаки", 38, C.bad, TITLE)
-        .setOrigin(0.5),
-    );
+    overlay.add(addPanel(this, W / 2, H / 2, 800, 380));
+    overlay.add(addPanelTitle(this, W / 2, H / 2 - 112, "Нечем отбивать атаки", 40, 30));
     overlay.add(
       addText(
         this,
@@ -1166,9 +1292,11 @@ export class HomeScene extends Phaser.Scene {
         H / 2 - 35,
         "Основное оружие не выбрано. В бою не получится парировать атаки.",
         25,
-        C.text,
-        { align: "center", wordWrap: { width: 650 } },
-      ).setOrigin(0.5),
+        MENU_ART.buttonTextColor,
+        { align: "center", wordWrap: { width: 650 }, stroke: "#000000", strokeThickness: 3 },
+      )
+        .setOrigin(0.5)
+        .setShadow(0, 2, "#000000", 0, true, true),
     );
     overlay.add(
       new Button(this, W / 2 - 180, H / 2 + 105, 320, 76, "Всё равно на охоту", () => {

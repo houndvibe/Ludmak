@@ -89,7 +89,7 @@ export class MenuScene extends Phaser.Scene {
     this.menuButton(L.start, "НАЧАТЬ ОХОТУ", MENU_ART.startFont, () =>
       this.openTutorialPrompt(start),
     );
-    this.menuButton(L.quickFight, "БЫСТРЫЙ БОЙ", 26, () =>
+    this.menuButton(L.quickFight, "БЫСТРЫЙ БОЙ", MENU_ART.quickFightFont, () =>
       this.openQuickFight(),
     );
     addVolumeSlider(this, L.volume);
@@ -139,13 +139,22 @@ export class MenuScene extends Phaser.Scene {
       .rectangle(0, 0, r.w, r.h, 0xffffff, 0.001)
       .setInteractive({ useHandCursor: true });
     cont.add([plate, label, hit]);
+    const G = FEEL.buttonGlow;
+    const glow = plate.postFX?.addGlow(G.color, 0, 0, false, G.quality, G.distance);
+    const lightUp = (on: boolean) => {
+      if (!glow) return;
+      this.tweens.killTweensOf(glow);
+      this.tweens.add({ targets: glow, outerStrength: on ? G.strength : 0, duration: G.fadeMs });
+    };
     hit.on("pointerover", () => {
       sfx(this, "ui_hover");
       this.tweens.add({ targets: cont, scale: 1.04, duration: 100 });
+      lightUp(true);
     });
     hit.on("pointerout", () => {
       label.setColor(MENU_ART.buttonTextColor);
       this.tweens.add({ targets: cont, scale: 1, duration: 100 });
+      lightUp(false);
     });
     hit.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (p.button !== 0) return;
@@ -373,22 +382,40 @@ export class MenuScene extends Phaser.Scene {
     box.add(
       this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.65).setInteractive(),
     );
+    // Фон — та же плашка, что у «Быстрого боя» (ui/quick_panel.png), девятью кусками: углы и рамка не тянутся.
+    const PW = 620;
+    const PH = 300;
+    const k = 0.75;
     box.add(
-      this.add
-        .rectangle(W / 2, H / 2, 620, 300, 0x0c0a10, 0.97)
-        .setStrokeStyle(2, C.border),
+      this.textures.exists(menuArtKey("quickPanel"))
+        ? this.add
+            .nineslice(W / 2, H / 2, menuArtKey("quickPanel"), undefined, PW / k, PH / k, 70, 70, 70, 70)
+            .setScale(k)
+        : this.add
+            .rectangle(W / 2, H / 2, PW, PH, 0x0c0a10, 1)
+            .setStrokeStyle(2, C.border),
     );
-    box.add(
-      addText(
-        this,
-        W / 2,
-        H / 2 - 55,
-        "Пройти Обучение?",
-        42,
-        MENU_ART.textColor,
-        TITLE,
-      ).setOrigin(0.5),
-    );
+    const title = addText(
+      this,
+      W / 2,
+      H / 2 - 55,
+      "Пройти обучение?",
+      40,
+      MENU_ART.buttonTextColor,
+      { ...TITLE, stroke: "#000000", strokeThickness: 3 },
+    )
+      .setOrigin(0.5)
+      .setShadow(0, 3, "#000000", 0, true, true);
+    box.add(title);
+    const gap = MENU_LAYOUT.quickArt.diamondGap;
+    for (const [id, side] of [["diamondLeft", -1], ["diamondRight", 1]] as const)
+      if (this.textures.exists(menuArtKey(id)))
+        box.add(
+          this.add
+            .image(W / 2 + side * (title.width / 2 + gap), title.y, menuArtKey(id))
+            .setScale(0.75)
+            .setOrigin(side < 0 ? 1 : 0, 0.5),
+        );
     box.add(
       new Button(
         this,
@@ -425,43 +452,87 @@ export class MenuScene extends Phaser.Scene {
    */
   private openQuickFight(): void {
     const Q = MENU_LAYOUT.quickPanel;
+    const A = MENU_LAYOUT.quickArt;
+    const has = (id: Parameters<typeof menuArtKey>[0]) =>
+      this.textures.exists(menuArtKey(id));
     const box = this.add.container(0, 0).setDepth(100);
     box.add(
       this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.6).setInteractive(),
     );
+    // Фон окна — картинка художницы (ui/quick_panel.png), без неё — прямоугольник.
     box.add(
-      this.add
-        .rectangle(Q.x, Q.y, Q.w, Q.h, 0x0c0a10, 0.95)
-        .setStrokeStyle(2, C.border),
+      has("quickPanel")
+        ? this.add
+            .image(Q.x, Q.y, menuArtKey("quickPanel"))
+            .setDisplaySize(Q.w, Q.h)
+        : this.add
+            .rectangle(Q.x, Q.y, Q.w, Q.h, 0x0c0a10, 1)
+            .setStrokeStyle(2, C.border),
     );
     const top = Q.y - Q.h / 2;
-    box.add(
-      addText(
-        this,
-        Q.x,
-        top + 50,
-        "Быстрый бой",
-        44,
-        MENU_ART.textColor,
-        TITLE,
-      ).setOrigin(0.5),
+    const titleStyle = {
+      ...TITLE,
+      stroke: "#000000",
+      strokeThickness: 3,
+    };
+    const shadow = (t: Phaser.GameObjects.Text) =>
+      t.setShadow(0, 3, "#000000", 0, true, true);
+
+    // Заголовок капителью: первая буква крупнее, остальное — заглавными поменьше, по общей базовой линии.
+    const big = shadow(
+      addText(this, 0, 0, "Б", A.titleSize, MENU_ART.buttonTextColor, titleStyle),
     );
+    const small = shadow(
+      addText(this, 0, 0, "ЫСТРЫЙ БОЙ", A.titleSmall, MENU_ART.buttonTextColor, titleStyle),
+    );
+    const baseY = top + A.titleY + A.titleSize * 0.35;
+    const titleW = big.width + small.width;
+    big.setPosition(Q.x - titleW / 2, baseY - big.style.getTextMetrics().ascent);
+    small.setPosition(
+      big.x + big.width,
+      baseY - small.style.getTextMetrics().ascent,
+    );
+    box.add([big, small]);
+    // Ромбы по бокам заголовка (ui/diamond_left.png, ui/diamond_right.png).
+    const titleMidY = top + A.titleY;
+    if (has("diamondLeft"))
+      box.add(
+        this.add
+          .image(Q.x - titleW / 2 - A.diamondGap, titleMidY, menuArtKey("diamondLeft"))
+          .setScale(0.75)
+          .setOrigin(1, 0.5),
+      );
+    if (has("diamondRight"))
+      box.add(
+        this.add
+          .image(Q.x + titleW / 2 + A.diamondGap, titleMidY, menuArtKey("diamondRight"))
+          .setScale(0.75)
+          .setOrigin(0, 0.5),
+      );
     box.add(
       addText(
         this,
         Q.x,
-        top + 100,
+        top + A.subY,
         "Один бой со стартовым снаряжением.",
-        22,
-        C.dim,
+        A.subSize,
+        A.subColor,
+        { fontStyle: "bold" },
       ).setOrigin(0.5),
     );
 
     // Ночь: кнопки 1–5, выбранная подсвечена.
     box.add(
-      addText(this, Q.x - 260, top + 170, "Ночь:", 28, C.text).setOrigin(
-        1,
-        0.5,
+      shadow(
+        addText(
+          this,
+          Q.x - 260,
+          top + 170,
+          "НОЧЬ:",
+          A.nightSize,
+          MENU_ART.buttonTextColor,
+          titleStyle,
+        ).setOrigin(1, 0.5),
       ),
     );
     const nights: Button[] = [];
@@ -488,53 +559,71 @@ export class MenuScene extends Phaser.Scene {
     }
     paint();
 
-    // Враги: портреты в ряд, имя под портретом; клик — бой.
+    // Враги: портреты в ряд под рамкой художницы (ui/portrait_frame.png), имя под портретом; клик — бой.
+    const framed = has("portraitFrame");
     const n = ENEMY_IDS.length;
     const gap = (Q.w - 80 - n * Q.portrait) / Math.max(1, n - 1);
     ENEMY_IDS.forEach((id, i) => {
       const x = Q.x - Q.w / 2 + 40 + Q.portrait / 2 + i * (Q.portrait + gap);
-      const y = top + 360;
-      const frame = this.add
-        .rectangle(x, y, Q.portrait + 10, Q.portrait * 1.25 + 10, 0x000000, 0.6)
-        .setStrokeStyle(2, C.border);
+      const y = top + A.portraitsY;
+      const fh = framed ? A.frameH : Q.portrait * 1.25 + 10;
+      const card = this.add.container(x, y);
+      const back = this.add.rectangle(0, 0, Q.portrait, Q.portrait * 1.25, 0x000000, 0.6);
       const img = fit(
-        this.add.image(x, y, enemyKey(id)),
+        this.add.image(0, 0, enemyKey(id)),
         Q.portrait,
         Q.portrait * 1.25,
       );
+      const frame = framed
+        ? this.add.image(0, 0, menuArtKey("portraitFrame")).setDisplaySize(A.frameW, A.frameH)
+        : this.add
+            .rectangle(0, 0, Q.portrait + 10, Q.portrait * 1.25 + 10)
+            .setStrokeStyle(2, C.border);
+      card.add([back, img, frame]);
       const name = addText(
         this,
         x,
-        y + Q.portrait * 0.625 + 30,
+        y + fh / 2 + A.nameGap,
         ENEMIES[id].name,
-        20,
-        C.text,
-        { align: "center", wordWrap: { width: Q.portrait + 20 } },
-      ).setOrigin(0.5, 0);
-      frame.setInteractive({ useHandCursor: true });
-      frame.on("pointerover", () => {
+        A.nameSize,
+        MENU_ART.buttonTextColor,
+        {
+          align: "center",
+          wordWrap: { width: Q.portrait + 20 },
+          stroke: "#000000",
+          strokeThickness: 3,
+        },
+      )
+        .setOrigin(0.5, 0)
+        .setShadow(0, 2, "#000000", 0, true, true);
+      const hit = this.add
+        .rectangle(x, y, A.frameW, fh, 0xffffff, 0.001)
+        .setInteractive({ useHandCursor: true });
+      hit.on("pointerover", () => {
         sfx(this, "ui_hover");
-        frame.setStrokeStyle(3, 0xe0b65a);
+        card.setScale(1.04);
+        if (!framed) (frame as Phaser.GameObjects.Rectangle).setStrokeStyle(3, 0xe0b65a);
         name.setColor(C.accent);
       });
-      frame.on("pointerout", () => {
-        frame.setStrokeStyle(2, C.border);
-        name.setColor(C.text);
+      hit.on("pointerout", () => {
+        card.setScale(1);
+        if (!framed) (frame as Phaser.GameObjects.Rectangle).setStrokeStyle(2, C.border);
+        name.setColor(MENU_ART.buttonTextColor);
       });
-      frame.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      hit.on("pointerdown", (p: Phaser.Input.Pointer) => {
         if (p.button !== 0) return;
         sfx(this, "ui_click");
         newQuickFight(id, this.quickNight, this.debug);
         goto(this, "Battle", ENEMIES[id].boss ? { final: true } : undefined);
       });
-      box.add([frame, img, name]);
+      box.add([card, name, hit]);
     });
 
     box.add(
       new Button(
         this,
         Q.x,
-        Q.y + Q.h / 2 - 60,
+        Q.y + Q.h / 2 - A.closeFromBottom,
         260,
         64,
         "Закрыть",

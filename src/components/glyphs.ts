@@ -6,6 +6,7 @@ import type { ItemCategory } from '../data/items';
 import type { TagId } from '../data/tags';
 
 export type GlyphId =
+  | 'drumstick'
   | 'sword'
   | 'shield'
   | 'heart'
@@ -64,7 +65,7 @@ export const CATEGORY_GLYPHS: Record<ItemCategory, GlyphId> = {
   armor: 'shield',
   amulet: 'amulet',
   alchemy: 'flask',
-  food: 'bread',
+  food: 'drumstick',
 };
 
 /** Значок тега (светлый на круге цвета тега). */
@@ -246,6 +247,20 @@ const GLYPHS: Record<GlyphId, (c: Ctx) => void> = {
     c.lineTo(0.18, -0.45);
     c.closePath();
     c.fill();
+  },
+  // Окорочок: мясо сверху слева, кость с двумя шишками — вниз вправо.
+  drumstick: (c) => {
+    c.save();
+    c.rotate(-Math.PI / 4);
+    c.beginPath();
+    c.ellipse(0, -0.32, 0.42, 0.56, 0, 0, Math.PI * 2);
+    c.fill();
+    c.fillRect(-0.1, 0.1, 0.2, 0.62);
+    c.beginPath();
+    c.arc(-0.13, 0.78, 0.15, 0, Math.PI * 2);
+    c.arc(0.13, 0.78, 0.15, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
   },
   bread: (c) => {
     c.beginPath();

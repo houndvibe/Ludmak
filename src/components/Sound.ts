@@ -1,7 +1,7 @@
 // Звуки и музыка. Ключи и громкость — src/config/audio.ts. Файлы грузит Boot; если файла нет, звук молча пропускается.
 // Звуковой менеджер Phaser общий на всю игру, поэтому звуки и музыка переживают смену сцен.
 import * as Phaser from 'phaser';
-import { AUDIO, type MusicKey, type SoundKey } from '../config/audio';
+import { AUDIO, SOUND_RATE_VARIATION, type MusicKey, type SoundKey } from '../config/audio';
 import { MUSIC_MASTER, MUSIC_VOLUME, SFX_MASTER, SOUND_VOLUME } from '../config/volume';
 
 /** Звучащие сейчас копии каждого звука — чтобы одинаковый звук не накладывался сам на себя. */
@@ -17,7 +17,9 @@ export function sfx(scene: Phaser.Scene, key: SoundKey): void {
   playing.set(key, set);
   if (set.size >= AUDIO.maxCopies) return;
   const volume = SFX_MASTER * SOUND_VOLUME[key];
-  const s = scene.sound.add(key, { volume });
+  const variation = SOUND_RATE_VARIATION[key];
+  const rate = variation ? Phaser.Math.FloatBetween(variation.min, variation.max) : 1;
+  const s = scene.sound.add(key, { volume, rate });
   set.add(s);
   const end = () => {
     set.delete(s);
@@ -25,7 +27,7 @@ export function sfx(scene: Phaser.Scene, key: SoundKey): void {
   };
   s.once(Phaser.Sound.Events.COMPLETE, end);
   if (!s.play()) return end();
-  fadeOutAtEnd(scene, s, volume);
+  fadeOutAtEnd(scene, s, volume, rate);
   audioDebug.played[key] = (audioDebug.played[key] ?? 0) + 1;
 }
 
@@ -33,10 +35,10 @@ export function sfx(scene: Phaser.Scene, key: SoundKey): void {
  * Плавное затухание в последние AUDIO.sfxFadeOutMs звука, по часам аудиодвижка — точно по сэмплам.
  * Работает в Web Audio (обычный случай); в запасном HTML5-режиме звук играет без затухания.
  */
-function fadeOutAtEnd(scene: Phaser.Scene, s: Phaser.Sound.BaseSound, volume: number): void {
+function fadeOutAtEnd(scene: Phaser.Scene, s: Phaser.Sound.BaseSound, volume: number, rate: number): void {
   const ctx = (scene.sound as Phaser.Sound.WebAudioSoundManager).context as AudioContext | undefined;
   const node = (s as unknown as { volumeNode?: GainNode }).volumeNode;
-  const duration = s.duration;
+  const duration = s.duration / rate;
   if (!ctx || !node || !(duration > 0) || AUDIO.sfxFadeOutMs <= 0) return;
   const fade = Math.min(AUDIO.sfxFadeOutMs / 1000, duration / 2);
   const end = ctx.currentTime + duration;

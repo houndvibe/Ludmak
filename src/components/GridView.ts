@@ -134,7 +134,9 @@ class Piece {
   /** Картинка рисуется в исходной форме w×h и поворачивается на 90°; остальное — по занимаемому месту. */
   layout(cell: number, cx: number, cy: number, w: number, h: number, rotated: boolean, star: number): void {
     this.cont.setPosition(cx, cy);
-    this.img.setAngle(rotated ? 90 : 0).setDisplaySize(w * cell, h * cell);
+    // Картинка вписывается в клетки с сохранением пропорций — узкий рисунок не растягивается вширь.
+    const k = Math.min((w * cell) / this.img.width, (h * cell) / this.img.height);
+    this.img.setAngle(rotated ? 90 : 0).setScale(k);
     const f = rotatedSize(w, h, rotated);
     this.fw = f.w * cell;
     this.fh = f.h * cell;

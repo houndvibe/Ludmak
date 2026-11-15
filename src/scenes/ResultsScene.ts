@@ -1,27 +1,28 @@
-// Итоги ночи: краткая сводка, карточки заказов, поверженные враги и сворачиваемый журнал боя.
+// Итоги ночи: узкий лист — исход, заказы строками, монеты «было → стало», журнал боя по ссылке (отдельным окном).
 import * as Phaser from 'phaser';
 import {
   BG_RESULTS_KEY,
   HOME_LAYOUT,
   MENU_ART,
   RESULTS_LAYOUT,
-  RESULTS_PARCHMENT_KEY,
   SEAL_IMPRINT_KEY,
   SEAL_STAMP_KEY,
   menuShardKey,
 } from '../config/assets';
 import { PARRY_REWARD_MULT } from '../config/balance';
+
+/** Цвета текста на тёмной панели итогов: основной — светлый бежевый, акцент — бежевый Kurale, второстепенный — приглушённый. */
+const INK = { text: '#e6dccb', accent: MENU_ART.buttonTextColor, dim: '#a89a84' };
 import { CLIENTS } from '../data/clients';
 import type { SoundKey } from '../config/audio';
 import { FEEL } from '../config/feel';
 import { tutorialAttach } from '../components/Hints';
 import { playMusic, sfx } from '../components/Sound';
-import { advanceNight, dayChain, finalAhead, heroLevel, markTutorialDone, nextLevel, run } from '../state';
+import { advanceNight, finalAhead, heroLevel, markTutorialDone, nextLevel, run } from '../state';
 import type { ContractResult, NightSummary } from '../state';
-import { enemyName } from '../data/modifiers';
 import { ENEMIES } from '../data/enemies';
 import { FINAL_BOSS } from '../config/balance';
-import { addBackground, addText, Button, C, coinIconKey, TITLE, fadeIn, goto, W } from '../ui';
+import { addBackground, addPanel, addPanelTitle, addText, Button, C, coinIconKey, TITLE, fadeIn, goto, H, W } from '../ui';
 
 interface ResultLinePart {
   text: string;
@@ -31,6 +32,8 @@ interface ResultLinePart {
 export class ResultsScene extends Phaser.Scene {
   /** Где на экране список поверженных (для подсказки обучения). */
   private foesRect = { x: 0, y: 0, w: 0, h: 0 };
+  /** Правый и нижний край листа (для печати и кнопки). */
+  private sheet = { right: 0, bottom: 0 };
 
   constructor() {
     super('Results');
@@ -40,23 +43,8 @@ export class ResultsScene extends Phaser.Scene {
     fadeIn(this);
     playMusic(this, 'music_night');
     const summary = run.summary!;
-    const R = RESULTS_LAYOUT;
-
     addBackground(this, BG_RESULTS_KEY);
-    if (this.textures.exists(RESULTS_PARCHMENT_KEY)) {
-      this.add.image(W / 2, R.panelY, RESULTS_PARCHMENT_KEY).setDisplaySize(R.panelW, R.panelH);
-    } else {
-      this.add.rectangle(W / 2, R.panelY, R.panelW, R.panelH, 0xc8ad76, 0.96).setStrokeStyle(2, 0x735337);
-    }
-
-    addText(this, W / 2, R.titleY, `Итоги ночи ${summary.night}`, 58, C.inkAccent, TITLE).setOrigin(0.5);
-    const outcome = this.outcomeLine(summary);
-    addText(this, W / 2, R.outcomeY, outcome.text, 30, outcome.color, TITLE).setOrigin(0.5);
-
-    this.drawEconomy(summary);
-    this.drawOrders(summary.results);
-    const totalEnemies = summary.results.reduce((total, result) => total + result.contract.enemies.length, 0);
-    this.drawFight(summary.outcome.defeated, totalEnemies);
+    this.drawSheet(summary);
     this.playStamp();
 
     const final = finalAhead();
@@ -74,11 +62,11 @@ export class ResultsScene extends Phaser.Scene {
     }
 
     const label = summary.gameOver
-      ? 'Дальше'
+      ? 'ДАЛЬШЕ'
       : final
-        ? `${ENEMIES[FINAL_BOSS].name} →`
-        : 'Следующая ночь →';
-    new Button(this, W / 2, 1000, 480, 80, label, () => {
+        ? `${ENEMIES[FINAL_BOSS].name.toUpperCase()} →`
+        : 'СЛЕДУЮЩАЯ НОЧЬ →';
+    new Button(this, W / 2, this.sheet.bottom + RESULTS_LAYOUT.buttonGap, 480, 80, label, () => {
       if (summary.gameOver) {
         goto(this, 'GameOver');
       } else if (final) {
@@ -94,7 +82,9 @@ export class ResultsScene extends Phaser.Scene {
   private playStamp(): void {
     if (!this.textures.exists(SEAL_STAMP_KEY)) return;
     const F = FEEL.stamp;
-    const S = RESULTS_LAYOUT.stamp;
+    // Печать — в правом нижнем углу листа (размер и отступ от угла — RESULTS_LAYOUT.stamp).
+    const L = RESULTS_LAYOUT.stamp;
+    const S = { x: this.sheet.right - L.dx, y: this.sheet.bottom - L.dy, size: L.size };
     const stamp = this.add.image(S.x, S.y, SEAL_STAMP_KEY).setDepth(20);
     const base = S.size / stamp.width;
     const tilt = Phaser.Math.FloatBetween(-F.tiltDeg, F.tiltDeg);
@@ -175,86 +165,167 @@ export class ResultsScene extends Phaser.Scene {
   private outcomeLine(summary: NightSummary): { text: string; color: string } {
     const total = summary.results.reduce((n, result) => n + result.contract.enemies.length, 0);
     switch (summary.outcome.kind) {
-      case 'win': return { text: '✓  Все заказы выполнены', color: C.inkGood };
-      case 'retreat': return { text: `↩  Отступили после ${summary.outcome.defeated} из ${total} врагов`, color: C.inkAccent };
-      case 'death': return { text: `✕  Людьмак пал: побеждено ${summary.outcome.defeated} из ${total}`, color: C.inkBad };
-      case 'skip': return { text: '…  День переждали дома', color: C.inkDim };
+      case 'win': return { text: '✓  Все заказы выполнены', color: C.good };
+      case 'retreat': return { text: `↩  Отступили после ${summary.outcome.defeated} из ${total} врагов`, color: INK.accent };
+      case 'death': return { text: `✕  Людьмак пал: побеждено ${summary.outcome.defeated} из ${total}`, color: C.bad };
+      case 'skip': return { text: '…  День переждали дома', color: INK.dim };
     }
   }
 
-  private drawEconomy(summary: NightSummary): void {
+  /** Лист итогов: пергамент по центру, сверху вниз — заголовок, исход, заказы, монеты, ссылка на журнал. */
+  private drawSheet(summary: NightSummary): void {
     const R = RESULTS_LAYOUT;
-    const gap = 14;
-    const tileW = (R.leftW - gap) / 2;
-    const goldX = R.leftX;
-    this.addMetricTile(goldX, R.metricY, tileW, R.metricH);
+    // Высота листа — по содержимому: заказы, монеты и низ с журналом и печатью; лист с кнопкой — по центру экрана.
+    const rows = summary.results.length
+      ? summary.results.reduce((h, r) => h + R.rowH + (r.stolen > 0 || r.refund > 0 || r.parryBonus ? R.noteH : 0), 0)
+      : 70;
+    const sheetH = Phaser.Math.Clamp(R.listY + rows + R.moneyGap + R.moneySize * 1.35 + 30 + R.bottomH, R.minH, R.maxH);
+    const left = W / 2 - R.sheetW / 2;
+    const top = Math.round((H - sheetH - R.buttonGap - 40) / 2);
+    const sheetY = top + sheetH / 2;
+    this.sheet = { right: left + R.sheetW, bottom: top + sheetH };
+    // Тёмная панель в общем стиле (ui/quick_panel.png), как у быстрого боя и привала.
+    addPanel(this, W / 2, sheetY, R.sheetW, sheetH);
+    const x0 = left + R.padX;
+    const x1 = left + R.sheetW - R.padX;
+    const width = x1 - x0;
 
-    addText(this, goldX + 16, R.metricY + 10, 'ЗОЛОТО', 18, C.inkDim, TITLE);
+    addPanelTitle(this, W / 2, top + R.titleY, `Итоги ночи ${summary.night}`, R.titleSize, Math.round(R.titleSize * 0.75));
+    const outcome = this.outcomeLine(summary);
+    addText(this, W / 2, top + R.outcomeY, outcome.text, R.outcomeSize, outcome.color, TITLE).setOrigin(0.5);
+
+    // Заказы — строками, между ними тонкие линии.
+    let y = top + R.listY;
+    const line = (yy: number) => this.add.rectangle(x0, yy, width, 1, 0x947951, 0.55).setOrigin(0, 0.5);
+    const listTop = y;
+    if (!summary.results.length) {
+      line(y);
+      addText(this, W / 2, y + 22, 'Заказов не было — день переждали дома.', 22, INK.dim).setOrigin(0.5, 0);
+      y += 70;
+    } else {
+      for (const result of summary.results) {
+        line(y);
+        y += this.drawOrderRow(result, x0, y, width);
+      }
+    }
+    line(y);
+    this.foesRect = { x: x0 - 10, y: listTop - 6, w: width + 20, h: y - listTop + 12 };
+
+    // Монеты: было → стало, крупно.
+    y += R.moneyGap;
+    addText(this, x0, y + 6, 'Монеты', 24, INK.dim, TITLE);
     const delta = summary.coinsAfter - summary.coinsBefore;
-    const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
-    this.drawRichText([{ text: deltaText, gold: true }], delta >= 0 ? C.inkGood : C.inkBad, goldX + 16, R.metricY + 31, tileW - 32, 36);
-    this.drawRichText([
-      { text: 'Баланс ' },
-      { text: `${summary.coinsBefore}`, gold: true },
-      { text: ' → ' },
-      { text: `${summary.coinsAfter}`, gold: true },
-    ], C.ink, goldX + 16, R.metricY + 82, tileW - 32, 18);
-
-  }
-
-  private addMetricTile(x: number, y: number, w: number, h: number): void {
-    this.add.rectangle(x + w / 2, y + h / 2, w, h, 0x745a38, 0.12).setStrokeStyle(1, 0x947951, 0.42);
-  }
-
-  private drawOrders(results: ContractResult[]): void {
-    const R = RESULTS_LAYOUT;
-    addText(this, R.leftX, R.orderTitleY, `Заказы  ·  ${results.length}`, 28, C.inkAccent, TITLE);
-    if (!results.length) {
-      addText(this, R.leftX + 4, R.orderY + 18, 'Заказов не было — день переждали дома.', 22, C.inkDim);
-      return;
+    this.drawRichText(
+      [{ text: `${summary.coinsBefore}`, gold: true }, { text: '→' }, { text: `${summary.coinsAfter}`, gold: true }],
+      INK.text,
+      x1 - this.richWidth([`${summary.coinsBefore}`, '→', `${summary.coinsAfter}`], 2, R.moneySize),
+      y,
+      width,
+      R.moneySize,
+    );
+    if (delta !== 0) {
+      addText(this, x1, y + R.moneySize * 1.35, delta > 0 ? `+${delta}` : `${delta}`, 20, delta > 0 ? C.good : C.bad)
+        .setOrigin(1, 0);
     }
-    results.forEach((result, i) => this.drawOrderCard(
-      result,
-      R.leftX,
-      R.orderY + i * (R.orderH + R.orderGap),
-      R.leftW,
-      R.orderH,
-    ));
+
+    // Журнал боя — ссылкой, открывается отдельным окном.
+    const log = run.battleLog;
+    const link = addText(
+      this,
+      x0,
+      top + sheetH - R.journalFromBottom,
+      log.length ? `Журнал боя  ·  ${log.length} записей  ▸` : 'Журнал боя  ·  записей нет',
+      21,
+      log.length ? INK.accent : INK.dim,
+      TITLE,
+    ).setOrigin(0, 0.5);
+    if (log.length) {
+      link.setInteractive({ useHandCursor: true });
+      link.on('pointerover', () => link.setColor(C.bad));
+      link.on('pointerout', () => link.setColor(INK.accent));
+      link.on('pointerdown', (p: Phaser.Input.Pointer) => {
+        if (p.button !== 0) return;
+        sfx(this, 'ui_click');
+        this.openJournal();
+      });
+    }
   }
 
-  private drawOrderCard(result: ContractResult, x: number, y: number, w: number, h: number): void {
+  /** Ширина строки с монетами (для выравнивания по правому краю). */
+  private richWidth(words: string[], golds: number, fontSize: number): number {
+    const coinSize = Math.max(13, fontSize * 0.72);
+    const wordGap = Math.max(3, fontSize * 0.17);
+    let w = 0;
+    for (const word of words) {
+      const t = addText(this, 0, 0, word, fontSize, INK.text);
+      w += t.width + wordGap;
+      t.destroy();
+    }
+    return w + golds * (coinSize + 4);
+  }
+
+  /** Строка заказа: имя и «враги a/b» слева, справа статус и сумма; ниже — пометки (кража, возврат аванса…). */
+  private drawOrderRow(result: ContractResult, x: number, y: number, w: number): number {
     const done = result.done;
-    const statusColor = done ? C.inkGood : C.inkBad;
-    this.add.rectangle(x + w / 2, y + h / 2, w, h, 0x765d3d, 0.09)
-      .setStrokeStyle(1, done ? 0x6f8850 : 0x9b5f4a, 0.46);
-
-    const client = CLIENTS[result.contract.client].name;
-    addText(this, x + 16, y + 10, client, 24, C.ink, TITLE);
-    const status = done ? '✓  ВЫПОЛНЕН' : '!  НЕ ВЫПОЛНЕН';
-    addText(this, x + w - 16, y + 13, status, 17, statusColor, TITLE).setOrigin(1, 0);
-
+    const color = done ? C.good : C.bad;
+    addText(this, x, y + 10, CLIENTS[result.contract.client].name, 26, INK.text, TITLE);
     const count = result.contract.enemies.length;
-    addText(this, x + 16, y + 45, `Враги: ${result.defeated}/${count}`, 19, C.inkDim);
+    addText(this, x, y + 44, `враги ${result.defeated}/${count}`, 18, INK.dim);
+    const status = addText(this, x + w, y + 14, done ? '✓ выполнен' : '✕ провален', 19, color, TITLE).setOrigin(1, 0);
     if (done || result.penalty > 0) {
-      const moneyLabel = done ? (result.advance ? 'Аванс' : 'Награда') : 'Неустойка';
       const amount = done ? (result.advance ? result.contract.reward : result.reward) : result.penalty;
-      addText(this, x + w - 112, y + 45, moneyLabel, 18, C.inkDim).setOrigin(1, 0);
-      this.drawMoneyRight(x + w - 16, y + 42, `${done ? '+' : '−'}${amount}`, statusColor, 21);
+      const label = done ? (result.advance ? 'аванс' : '') : '';
+      this.drawMoneyRight(x + w, y + 42, `${label ? label + ' ' : ''}${done ? '+' : '−'}${amount}`, color, 22);
+    } else {
+      status.setY(y + 26);
     }
-
     const notes: ResultLinePart[] = [];
-    if (result.stolen > 0) {
-      notes.push({ text: 'Украдено ' }, { text: `${Math.min(result.stolen, result.contract.reward)}`, gold: true });
-    }
+    if (result.stolen > 0) notes.push({ text: 'украдено ' }, { text: `${Math.min(result.stolen, result.contract.reward)}`, gold: true });
     if (result.refund > 0) {
-      if (notes.length) notes.push({ text: '   ·   ' });
-      notes.push({ text: 'Возврат аванса ' }, { text: `${result.refund}`, gold: true });
+      if (notes.length) notes.push({ text: ' · ' });
+      notes.push({ text: 'возврат аванса ' }, { text: `${result.refund}`, gold: true });
     }
     if (result.parryBonus) {
-      if (notes.length) notes.push({ text: '   ·   ' });
-      notes.push({ text: `Бонус за парирование ×${PARRY_REWARD_MULT}` });
+      if (notes.length) notes.push({ text: ' · ' });
+      notes.push({ text: `бонус за парирование ×${PARRY_REWARD_MULT}` });
     }
-    if (notes.length) this.drawRichText(notes, C.inkDim, x + 16, y + 77, w - 32, 17);
+    const R = RESULTS_LAYOUT;
+    if (!notes.length) return R.rowH;
+    return R.rowH + this.drawRichText(notes, INK.dim, x, y + R.rowH - 6, w, 16);
+  }
+
+  /** Журнал боя отдельным окном на плашке художницы: прокрутка колесом, «Закрыть». */
+  private openJournal(): void {
+    const J = RESULTS_LAYOUT.journal;
+    const box = this.add.container(0, 0).setDepth(200);
+    box.add(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.6).setInteractive());
+    box.add(addPanel(this, W / 2, H / 2, J.w, J.h));
+    const top = H / 2 - J.h / 2;
+    box.add(addPanelTitle(this, W / 2, top + 62, 'Журнал боя', 40, 30));
+    const content = { x: W / 2 - J.w / 2 + J.pad, y: top + 110, w: J.w - J.pad * 2, h: J.h - 110 - 120 };
+    const list = this.add.container(content.x, content.y);
+    let ly = 0;
+    for (const row of run.battleLog) {
+      const t = addText(this, 0, ly, row.text, 20, row.color, { wordWrap: { width: content.w }, stroke: '#000000', strokeThickness: 3 });
+      list.add(t);
+      ly += t.height + 4;
+    }
+    list.setMask(this.make.graphics({}, false).fillStyle(0xffffff).fillRect(content.x, content.y, content.w, content.h).createGeometryMask());
+    box.add(list);
+    const minOffset = Math.min(0, content.h - ly);
+    let offset = minOffset;
+    list.setY(content.y + offset);
+    const onWheel = (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
+      offset = Phaser.Math.Clamp(offset - dy * 0.5, minOffset, 0);
+      list.setY(content.y + offset);
+    };
+    this.input.on('wheel', onWheel);
+    box.add(
+      new Button(this, W / 2, top + J.h - 70, 260, 64, 'Закрыть', () => {
+        this.input.off('wheel', onWheel);
+        box.destroy();
+      }, 26),
+    );
   }
 
   private drawMoneyRight(right: number, y: number, value: string, color: string, size: number): void {
@@ -294,77 +365,5 @@ export class ResultsScene extends Phaser.Scene {
       }
     }
     return rows * lineHeight;
-  }
-
-  /** Поверженные враги остаются видимыми; журнал открывается в прокручиваемой области под переключателем. */
-  private drawFight(defeated: number, total: number): void {
-    const R = RESULTS_LAYOUT;
-    const x = R.rightX;
-    const foes = dayChain().slice(0, defeated);
-    const top = R.outcomeY + 42;
-    addText(this, x, top, `Повержены  ${foes.length} / ${total}`, 30, C.inkAccent, TITLE);
-    const names = foes.length ? foes.map((f) => enemyName(f.enemy, f.mod)).join(', ') : 'Никого';
-    const namesText = addText(this, x, top + 40, names, 21, foes.length ? C.ink : C.inkDim, { wordWrap: { width: R.rightW } });
-    this.foesRect = { x: x - 10, y: top - 6, w: R.rightW + 20, h: 48 + namesText.height };
-
-    const log = run.battleLog;
-    const toggleY = R.journalToggleY;
-    const toggleH = 42;
-    const toggleBg = this.add.rectangle(x + R.rightW / 2, toggleY + toggleH / 2, R.rightW, toggleH, 0x765d3d, 0.11)
-      .setStrokeStyle(1, 0x947951, 0.48);
-    const toggleLabel = addText(
-      this,
-      x + 16,
-      toggleY + 9,
-      log.length ? `Журнал боя  ·  ${log.length} записей  ▸` : 'Журнал боя  ·  записей нет',
-      21,
-      C.inkAccent,
-      TITLE,
-    );
-    const hit = this.add.rectangle(x + R.rightW / 2, toggleY + toggleH / 2, R.rightW, toggleH, 0xffffff, 0.001)
-      .setInteractive({ useHandCursor: log.length > 0 });
-    let expanded = false;
-    if (log.length) {
-      hit.on('pointerover', () => toggleBg.setFillStyle(0x765d3d, 0.2));
-      hit.on('pointerout', () => toggleBg.setFillStyle(0x765d3d, 0.11));
-      hit.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-        if (pointer.button !== 0) return;
-        expanded = !expanded;
-        toggleLabel.setText(`Журнал боя  ·  ${log.length} записей  ${expanded ? '▾' : '▸'}`);
-        journalBg.setVisible(expanded);
-        journal.setVisible(expanded);
-      });
-    } else {
-      toggleLabel.setColor(C.inkDim);
-    }
-
-    const box = { x, y: R.logY, w: R.rightW, h: R.logBottom - R.logY };
-    const journalBg = this.add.rectangle(box.x, box.y, box.w, box.h, 0x19141a, 0.86)
-      .setOrigin(0)
-      .setStrokeStyle(1, C.border);
-    journalBg.setVisible(false);
-    const content = {
-      x: box.x + R.logPadX,
-      y: box.y + R.logPadY,
-      w: box.w - R.logPadX * 2,
-      h: box.h - R.logPadY * 2,
-    };
-    const journal = this.add.container(content.x, content.y).setVisible(false);
-    let logY = 0;
-    for (const row of log) {
-      const text = addText(this, 0, logY, row.text, R.logSize, row.color, { wordWrap: { width: content.w } });
-      journal.add(text);
-      logY += text.height + 4;
-    }
-    const maskGraphics = this.make.graphics({}, false).fillStyle(0xffffff).fillRect(content.x, content.y, content.w, content.h);
-    journal.setMask(maskGraphics.createGeometryMask());
-    const minOffset = Math.min(0, content.h - logY);
-    let offset = minOffset;
-    journal.setY(content.y + offset);
-    this.input.on('wheel', (pointer: Phaser.Input.Pointer, _over: unknown, _dx: number, dy: number) => {
-      if (!expanded || pointer.x < content.x || pointer.x > content.x + content.w || pointer.y < content.y || pointer.y > content.y + content.h) return;
-      offset = Phaser.Math.Clamp(offset - dy * 0.5, minOffset, 0);
-      journal.setY(content.y + offset);
-    });
   }
 }

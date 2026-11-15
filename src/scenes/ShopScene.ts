@@ -1,6 +1,6 @@
 // Магазин — лавка нечисти: товары на прилавке слева, торговец посередине, твои вещи в мешке справа (SHOP_LAYOUT). 5 случайных предметов. Покупка — перетащить товар в «Твои вещи» (на такой же предмет — слияние), продажа — перетащить свою вещь к товарам. Обновление ассортимента.
 import * as Phaser from 'phaser';
-import { BG_SHOP_KEY, HORSE_ART, itemKey, SHOP_LAYOUT, statIconKey, tagKey, UI_ART, uiShopCardKey } from '../config/assets';
+import { BG_SHOP_KEY, SHOP_MERCHANT_KEY, HORSE_ART, itemKey, MENU_ART, SHOP_LAYOUT, statIconKey, tagKey, UI_ART, uiShopCardKey } from '../config/assets';
 import { ITEM_STATS, SHOP_SIZE } from '../config/balance';
 import { FEEL } from '../config/feel';
 import { ITEMS, type ItemId } from '../data/items';
@@ -13,6 +13,7 @@ import { buy, buyAndMerge, buyMergeCharges, canMerge, canReroll, mergedPreview, 
 import {
   addBackground,
   addHeader,
+  addPanelText,
   addText,
   Button,
   C,
@@ -66,6 +67,8 @@ interface Lift {
   scale: number;
   cy: number;
   on: boolean;
+  /** Вещь-«стикер» в мешке: вместо рамки при наведении — свечение по контуру картинки (готовая картинка под вещью). */
+  glow?: Phaser.GameObjects.Image;
 }
 
 /** Где что лежит на экране — SHOP_LAYOUT в assets.ts. */
@@ -82,20 +85,28 @@ const CARD_SH = CARD_H * L.cards.scale;
 const CARD = {
   badge: 58,
   /** Клетки под картинкой предмета: размер клетки, px (не больше — иначе по месту под картинку). */
-  gridCell: 50,
+  gridCell: 64,
   /** Ряды характеристик после нарисованных ячеек: высота и зазор, px. */
-  extraChipH: 33,
-  extraChipGap: 5,
+  extraChipH: 36,
+  extraChipGap: 6,
+  /** Плашка характеристики: скругление, заливка и рамка (цвет и прозрачность). */
+  chipRadius: 18,
+  chipFill: 0x0e0c12,
+  chipFillAlpha: 0.55,
+  chipLine: 0xb7a58a,
+  chipLineAlpha: 0.35,
   /** Цена справа вверху: центр монеты и числа — столько px левее внутреннего правого края. */
-  priceRight: 30,
+  priceRight: 22,
+  /** Значок категории и цена — выше обычного отступа карточки на столько px; значок — левее на badgeLeft px. */
+  topUp: 6,
+  badgeLeft: 6,
   pillH: 30,
   pillPadX: 10,
   pillIcon: 20,
   pillGap: 6,
-  chipIcon: 34,
+  chipIcon: 30,
   chipGap: 8,
 };
-const TILES_PER_PAGE = L.tiles.perRow * L.tiles.rows;
 
 /** Центр места n (0…) на прилавке: ряды по L.cards.perRow, неполный ряд — по центру прилавка. */
 function cardCenter(n: number, total: number): { x: number; y: number } {
@@ -139,6 +150,7 @@ export class ShopScene extends Phaser.Scene {
     fadeIn(this);
     playMusic(this, 'music_night');
     addBackground(this, BG_SHOP_KEY);
+    this.addMerchant();
     addHeader(this, 'Магазин');
     this.lifts = [];
     this.cardCells = [];
@@ -187,6 +199,8 @@ export class ShopScene extends Phaser.Scene {
         if (tile && buyAndMerge(i, tile.item.uid)) {
           sfx(this, 'item_merge');
         } else if (Phaser.Geom.Rectangle.Contains(this.zoneRect('buy'), px, py) && buy(i)) {
+          // Новая вещь ложится в мешок туда, где её отпустили.
+          this.placeInBag(run.items[run.items.length - 1].uid, px, py);
           sfx(this, 'shop_buy');
         } else return false;
         tutorialDone(this, 'buy');
@@ -203,7 +217,9 @@ export class ShopScene extends Phaser.Scene {
         if (!reroll()) return;
         sfx(this, 'shop_reroll');
         this.refresh();
-      }).setEnabled(run.coins >= cost);
+      })
+        .addIcon(coinIconKey(this), 34)
+        .setEnabled(run.coins >= cost);
     }
     // Дебаг: в магазине все предметы — листаются страницами (на месте кнопки обновления).
     if (offerPages > 1) {
@@ -216,7 +232,7 @@ export class ShopScene extends Phaser.Scene {
       new Button(this, R.x + R.w / 2 - 50, R.y, 100, R.h, '▶', () => turn(1), 36).setEnabled(this.offersPage < offerPages - 1);
       addText(this, R.x, R.y, `DEBUG · все предметы\nстр. ${this.offersPage + 1} из ${offerPages}`, 22, C.accent, { align: 'center' }).setOrigin(0.5);
     }
-    new Button(this, L.home.x, L.home.y, L.home.w, L.home.h, 'Домой →', () => {
+    new Button(this, L.home.x, L.home.y, L.home.w, L.home.h, 'ДОМОЙ →', () => {
       tutorialDone(this, 'shopHome');
       goto(this, 'Home');
     }, 32);
@@ -292,7 +308,7 @@ export class ShopScene extends Phaser.Scene {
 
     // Значок категории и форма предмета в клетках.
     const type = itemTypeIcon(id);
-    const badge = fit(this.add.image(x + L.pad + CARD.badge / 2, y + L.pad + CARD.badge / 2, type.key), CARD.badge, CARD.badge);
+    const badge = fit(this.add.image(x + L.pad - CARD.badgeLeft + CARD.badge / 2, y + L.pad - CARD.topUp + CARD.badge / 2, type.key), CARD.badge, CARD.badge);
     // У оружия и щита — ещё парирование: сколько урона гасит и эффект (на самой карточке этих значков нет).
     const parry = parryInfo(id);
     const typeHint = parry
@@ -303,13 +319,13 @@ export class ShopScene extends Phaser.Scene {
     this.hoverHint(badge, typeHint, parry ? 'left' : 'center');
     // Цена — справа вверху (где раньше была форма в клетках); не хватает монет — красная, товар не тащится.
     const afford = run.coins >= price;
-    this.addPrice(x + CARD_W - L.pad - CARD.priceRight, y + L.pad + CARD.badge / 2, `${price}`, afford ? C.accent : C.bad);
+    this.addPrice(x + CARD_W - L.pad - CARD.priceRight, y + L.pad - CARD.topUp + CARD.badge / 2, `${price}`, afford ? C.accent : C.bad);
 
     // Предмет — поверх своих клеток, как в инвентаре: сразу видно, сколько места он займёт.
     const cell = Math.min(CARD.gridCell, L.iconSize / Math.max(def.w, def.h));
     const cells = this.addCells(cx, y + L.iconY, def.w, def.h, cell);
     const icon = fit(this.add.image(cx, y + L.iconY, itemKey(id)), def.w * cell, def.h * cell);
-    addText(this, cx, y + L.nameY, def.name, 28, C.text, TITLE).setOrigin(0.5);
+    addPanelText(this, cx, y + L.nameY, def.name, 28, MENU_ART.buttonTextColor, true);
 
     // Плашки — только теги (тип предмета — значок вверху). Место под них есть всегда, даже без тегов:
     // характеристики у всех карточек начинаются на одной высоте.
@@ -368,6 +384,10 @@ export class ShopScene extends Phaser.Scene {
       ease: 'Sine.easeOut',
     });
     this.tweens.add({ targets: l.outline, alpha: on ? 1 : 0, duration: S.hoverMs });
+    if (l.glow) {
+      this.tweens.killTweensOf(l.glow);
+      this.tweens.add({ targets: l.glow, alpha: on ? 1 : 0, duration: S.hoverMs });
+    }
     if (on) l.cont.setDepth(10);
     else l.cont.setDepth(0);
   }
@@ -466,7 +486,13 @@ export class ShopScene extends Phaser.Scene {
     const tagW = 26;
     // Сначала фоны (ниже в контейнере), потом значки и числа.
     const built = chips.map((ch) => {
-      const t = addText(this, 0, 0, ch.value, 26, ch.icon === 'self' ? C.bad : C.text, { fontStyle: 'bold' }).setOrigin(0, 0.5);
+      const t = addText(this, 0, 0, ch.value, 24, ch.icon === 'self' ? C.bad : MENU_ART.buttonTextColor, {
+        ...TITLE,
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+        .setOrigin(0, 0.5)
+        .setShadow(0, 2, '#000000', 0, true, true);
       const need = 6 + P.chipIcon + 8 + (ch.tag || ch.icon2 ? tagW + 6 : 0) + t.width + 8;
       return { ch, t, wide: !!ch.wide || need > colW };
     });
@@ -484,8 +510,19 @@ export class ShopScene extends Phaser.Scene {
       const top = y + Math.min(row, slotRows) * (chipH + P.chipGap) + extra * (P.extraChipH + P.extraChipGap);
       const h = row < slotRows ? chipH : P.extraChipH;
       const mid = top + h / 2;
-      const bg = this.add.rectangle(left, top, b.wide ? w : colW, h, 0x000000, row < slotRows ? 0.001 : 0.4).setOrigin(0);
-      let ix = left + 8;
+      const bw = b.wide ? w : colW;
+      // Плашка: тёмная скруглённая подложка с тонкой светлой рамкой — характеристики стоят ровными ячейками.
+      if (row >= slotRows) {
+        const r = Math.min(P.chipRadius, h / 2);
+        this.add
+          .graphics()
+          .fillStyle(P.chipFill, P.chipFillAlpha)
+          .fillRoundedRect(left, top, bw, h, r)
+          .lineStyle(1.5, P.chipLine, P.chipLineAlpha)
+          .strokeRoundedRect(left, top, bw, h, r);
+      }
+      const bg = this.add.rectangle(left, top, bw, h, 0x000000, 0.001).setOrigin(0);
+      let ix = left + 4;
       fit(this.add.image(ix + P.chipIcon / 2, mid, statIconKey(b.ch.icon)), P.chipIcon, P.chipIcon);
       ix += P.chipIcon + 8;
       if (b.ch.tag || b.ch.icon2) {
@@ -501,6 +538,104 @@ export class ShopScene extends Phaser.Scene {
         row++;
       }
     }
+  }
+
+  /** Торговец поверх фона: дышит (тянется вверх от ног) и чуть покачивается. Нет картинки — ничего не делаем. */
+  private addMerchant(): void {
+    if (!this.textures.exists(SHOP_MERCHANT_KEY)) return;
+    const M = L.merchantArt;
+    const F = FEEL.shop.merchant;
+    const k = 0.75; // фон 2560×1440 → экран 1920×1080
+    const img = this.add.image(0, 0, SHOP_MERCHANT_KEY).setOrigin(0.5, 1).setScale(k);
+    // Опора — середина низа вырезки (ноги): оттуда растёт дыхание и вокруг неё покачивание.
+    img.setPosition((M.x + img.width / 2) * k, (M.y + img.height) * k);
+    this.tweens.add({ targets: img, scaleY: k * (1 + F.breath), scaleX: k * (1 + F.breath * 0.3), duration: F.breathMs, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    img.setAngle(-F.sway / 2);
+    this.tweens.add({ targets: img, angle: F.sway / 2, duration: F.swayMs, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  }
+
+  /** Где лежит каждая вещь в мешке: центр и наклон (живёт, пока открыта игра; новая вещь — на autoSpot). */
+  private static bagSpots = new Map<number, { x: number; y: number; a: number }>();
+
+  /** Наклон вещи — свой у каждой, всегда один и тот же (зависит от uid). */
+  private static tilt(uid: number): number {
+    const r = ((uid * 7919 + 13) % 1000) / 1000 - 0.5;
+    return r * 2 * FEEL.shop.stickerTilt;
+  }
+
+  /** Место по умолчанию: раскладка tiles со сдвигом рядов и небольшим разбросом. */
+  private autoSpot(uid: number, i: number): { x: number; y: number; a: number } {
+    const T = L.tiles;
+    const S = FEEL.shop;
+    const n = i % (T.perRow * T.rows);
+    const row = Math.floor(n / T.perRow);
+    const rnd = (k: number) => (((uid * (k * 7919 + 13)) % 1000) / 1000 - 0.5) * 2;
+    return {
+      x: T.x + (n % T.perRow) * (T.w + T.gap) + T.w / 2 + (row % 2 ? T.w / 4 : 0) + rnd(1) * S.stickerJitter,
+      y: T.y + row * (T.h + T.gap) + T.h / 2 + rnd(2) * S.stickerJitter,
+      a: ShopScene.tilt(uid),
+    };
+  }
+
+  /** Положить вещь в мешок в точку (px, py) — не дальше границы L.bagArea. */
+  private placeInBag(uid: number, px: number, py: number): void {
+    const A = L.bagArea;
+    const m = FEEL.shop.stickerEdge;
+    ShopScene.bagSpots.set(uid, {
+      x: Phaser.Math.Clamp(px, A.x + m, A.x + A.w - m),
+      y: Phaser.Math.Clamp(py, A.y + m, A.y + A.h - m),
+      a: ShopScene.tilt(uid),
+    });
+  }
+
+  /**
+   * Ореол вокруг рисунка предмета: тень цвета hoverColor, нарисованная на холсте один раз (уменьшенная копия: длинная
+   * сторона — stickerGlowRes px). q — во сколько раз холст меньше исходной картинки.
+   */
+  private glowTexture(src: string): { key: string; q: number } {
+    const S = FEEL.shop;
+    const key = `${src}_halo`;
+    const img = this.textures.get(src).getSourceImage() as HTMLImageElement;
+    const q = Math.min(1, S.stickerGlowRes / Math.max(img.width, img.height));
+    if (!this.textures.exists(key)) {
+      const w = Math.round(img.width * q);
+      const h = Math.round(img.height * q);
+      const pad = S.stickerGlow * 3;
+      const tex = this.textures.createCanvas(key, w + pad * 2, h + pad * 2)!;
+      const ctx = tex.getContext();
+      const away = w + pad * 4;
+      ctx.shadowColor = Phaser.Display.Color.IntegerToColor(S.hoverColor).rgba;
+      ctx.shadowBlur = S.stickerGlow;
+      ctx.shadowOffsetX = away;
+      for (let i = 0; i < 3; i++) ctx.drawImage(img, pad - away, pad, w, h);
+      tex.refresh();
+    }
+    return { key, q };
+  }
+
+  /** Доля непрозрачных пикселей картинки (0…1) — считается один раз на уменьшенной копии. */
+  private static opaque = new Map<string, number>();
+  private opaqueShare(key: string): number {
+    const cached = ShopScene.opaque.get(key);
+    if (cached !== undefined) return cached;
+    let share = 0.5;
+    try {
+      const img = this.textures.get(key).getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+      const n = 64;
+      const cv = document.createElement('canvas');
+      cv.width = n;
+      cv.height = n;
+      const ctx = cv.getContext('2d', { willReadFrequently: true })!;
+      ctx.drawImage(img, 0, 0, n, n);
+      const data = ctx.getImageData(0, 0, n, n).data;
+      let solid = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 40) solid++;
+      share = Math.max(0.05, solid / (n * n));
+    } catch {
+      // нет доступа к пикселям — считаем, что рисунок занимает половину картинки
+    }
+    ShopScene.opaque.set(key, share);
+    return share;
   }
 
   /** Плитка своей вещи под точкой, с которой можно слить вещь item (тот же предмет и уровень), иначе null. */
@@ -525,8 +660,9 @@ export class ShopScene extends Phaser.Scene {
 
   /** Монета и число (цена товара, выручка за продажу) с центром (cx, cy). */
   private addPrice(cx: number, cy: number, text: string, color: string, size = 30): void {
-    const r = size * 0.42;
-    const coin = this.add.circle(0, cy, r, 0xe0b65a).setStrokeStyle(3, 0x7a5a1a);
+    // Монета — картинка художницы (как в шапке); число — рядом.
+    const r = size * 0.5;
+    const coin = this.add.image(0, cy, coinIconKey(this)).setDisplaySize(r * 2, r * 2);
     const t = addText(this, 0, cy, text, size, color, { fontStyle: 'bold' }).setOrigin(0, 0.5);
     const total = r * 2 + 8 + t.width;
     const left = cx - total / 2;
@@ -618,7 +754,12 @@ export class ShopScene extends Phaser.Scene {
         lift.cont.setAlpha(S.dragDimAlpha);
         const b = icon.getBounds();
         ghost?.destroy();
-        ghost = fit(this.add.image(b.centerX, b.centerY, itemKey(id)), S.ghostSize, S.ghostSize).setDepth(100);
+        ghost = this.add.image(b.centerX, b.centerY, itemKey(id)).setDepth(100);
+        // Одинаковый «вес» у всех предметов: масштаб по площади рисунка, длинная сторона — не больше ghostMax.
+        const gw = ghost.width;
+        const gh = ghost.height;
+        const fill = this.opaqueShare(itemKey(id));
+        ghost.setScale(Math.min(S.ghostArea / Math.sqrt(fill * gw * gh), S.ghostMax / Math.max(gw, gh)));
         this.tweens.add({ targets: ghost, x: p.x, y: p.y, angle: S.ghostAngle, duration: 80 });
         update(p);
       });
@@ -653,30 +794,55 @@ export class ShopScene extends Phaser.Scene {
     }
   }
 
-  /** «Твои вещи» в мешке постранично: L.tiles.perRow в ряду, L.tiles.rows рядов, стрелки ◀ ▶ внизу мешка. */
+  /** «Твои вещи» в мешке: все разом, каждая — на своём месте (без страниц). */
   private drawOwnedItems(): void {
-    const T = L.tiles;
-    const pages = Math.max(1, Math.ceil(run.items.length / TILES_PER_PAGE));
-    this.page = Phaser.Math.Clamp(this.page, 0, pages - 1);
-
-    const first = this.page * TILES_PER_PAGE;
     this.tiles = [];
     const canSell = !tutorialStepIs('buy');
-    run.items.slice(first, first + TILES_PER_PAGE).forEach((item, i) => {
-      const x = T.x + (i % T.perRow) * (T.w + T.gap);
-      const y = T.y + Math.floor(i / T.perRow) * (T.h + T.gap);
+    run.items.forEach((item, i) => {
+      // Вещь лежит в мешке «стикером»: картинка с тенью, слегка повёрнутая, без рамки и подписи. Лежит там,
+      // куда её отпустили (как в Backpack Battles); новая вещь без места — на свободное место по раскладке tiles.
+      const S = FEEL.shop;
+      const spot = ShopScene.bagSpots.get(item.uid) ?? this.autoSpot(item.uid, i);
+      ShopScene.bagSpots.set(item.uid, spot);
       const from = this.children.list.length;
-      const tile = this.add.rectangle(x, y, T.w, T.h, C.panel, 0.92).setOrigin(0).setStrokeStyle(1, C.border);
-      const bounds = new Phaser.Geom.Rectangle(x, y, T.w, T.h);
+      const def = ITEMS[item.id];
+      const img = this.add.image(spot.x, spot.y, itemKey(item.id));
+      // Размер — по клеткам, как в сумках, но длинная сторона не больше stickerMax: меч не перерастает мешок.
+      img.setScale(Math.min((def.w * S.stickerCell) / img.width, (def.h * S.stickerCell) / img.height, S.stickerMax / Math.max(img.width, img.height)));
+      img.setAngle(spot.a);
+      // Свечение при наведении — заранее нарисованный ореол под вещью (без шейдера: он даёт полосы у краёв картинки).
+      const halo = this.glowTexture(itemKey(item.id));
+      const glow = this.add
+        .image(spot.x, spot.y, halo.key)
+        .setScale(img.scaleX / halo.q)
+        .setAngle(spot.a)
+        .setAlpha(0);
+      this.children.moveBelow(glow as unknown as Phaser.GameObjects.GameObject, img as unknown as Phaser.GameObjects.GameObject);
+      const iw = img.displayWidth;
+      const ih = img.displayHeight;
+      const shadow = this.add.ellipse(spot.x, spot.y + ih * 0.42, Math.max(iw, ih * 0.5) * 0.9, 16, 0x000000, S.stickerShadow);
+      this.children.moveBelow(shadow as unknown as Phaser.GameObjects.GameObject, img as unknown as Phaser.GameObjects.GameObject);
+      // Невидимая зона под вещью — за неё берут и на неё отпускают для слияния.
+      const pad = 10;
+      const bounds = new Phaser.Geom.Rectangle(spot.x - iw / 2 - pad, spot.y - ih / 2 - pad, iw + pad * 2, ih + pad * 2);
+      const tile = this.add.rectangle(bounds.x, bounds.y, bounds.width, bounds.height, 0x000000, 0.001).setOrigin(0);
       this.tiles.push({ item, bounds });
-      const img = fit(this.add.image(x + 38, y + 42, itemKey(item.id)), 62, 62);
+      const x = bounds.x;
+      const y = bounds.y;
+      const T = { w: bounds.width, h: bounds.height + 18 };
+      const cx = spot.x;
       const star = starOf(item);
-      addText(this, x + 76, y + 8, `${ITEMS[item.id].name}${star > 1 ? ` ★${star}` : ''}`, 17, C.text, { wordWrap: { width: T.w - 82 } });
-      const sub = [item.inGrid ? '' : 'вне сумок', item.charges !== undefined ? `зарядов ${item.charges}` : ''].filter(Boolean).join(', ');
-      if (sub) addText(this, x + 76, y + 54, sub, 14, C.dim, { wordWrap: { width: T.w - 82 } });
+      if (star > 1) addPanelText(this, x + T.w - 10, y + 12, `★${star}`, 24, '#ffd45a', true);
       const price = sellPrice(item);
-      this.addPrice(x + T.w - 40, y + T.h - 20, `+${price}`, C.accent, 20);
+      this.addPrice(cx, y + T.h - 12, `+${price}`, C.accent, 20);
+      const name = `${ITEMS[item.id].name}${star > 1 ? ` ★${star}` : ''}`;
+      const sub = [item.uid === run.mainUid ? 'основное оружие' : '', item.inGrid ? '' : 'вне сумок', item.charges !== undefined ? `зарядов ${item.charges}` : '']
+        .filter(Boolean)
+        .join(', ');
+      this.hoverHint(tile, sub ? `${name}\n${sub}` : name);
       const lift = this.wrapLift(from, bounds, FEEL.shop.tileHoverScale, canSell);
+      lift.outline.clear();
+      lift.glow = glow;
       // Продать — перетащить вещь на прилавок. На шаге обучения «купи» продавать нельзя (мешок открыт для покупки).
       if (!canSell) return;
       // Перетащить на такую же вещь того же уровня в мешке — слияние; на прилавок — продажа.
@@ -692,24 +858,17 @@ export class ShopScene extends Phaser.Scene {
           this.time.delayedCall(1500, () => this.hint.setVisible(false));
         } else if (Phaser.Geom.Rectangle.Contains(this.zoneRect('sell'), px, py)) {
           sell(item.uid);
+          ShopScene.bagSpots.delete(item.uid);
           sfx(this, 'shop_sell');
+        } else if (Phaser.Geom.Rectangle.Contains(geom(L.bagArea), px, py)) {
+          // Переложить внутри мешка — туда, куда отпустили.
+          this.placeInBag(item.uid, px, py);
+          sfx(this, 'item_place');
         } else return false;
         this.refresh();
         return true;
       }, item);
     });
 
-    if (pages > 1) {
-      const N = L.bagNav;
-      new Button(this, N.prevX, N.y, N.w, N.h, '◀', () => {
-        this.page--;
-        this.refresh();
-      }, 30).setEnabled(this.page > 0);
-      new Button(this, N.nextX, N.y, N.w, N.h, '▶', () => {
-        this.page++;
-        this.refresh();
-      }, 30).setEnabled(this.page < pages - 1);
-      addText(this, N.pageX, N.y, `стр. ${this.page + 1} из ${pages}`, 22, C.dim).setOrigin(0.5);
-    }
   }
 }

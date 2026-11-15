@@ -122,7 +122,7 @@ export type BattleEvent =
   | { type: 'enemyCharge'; uid: number; left: number }
   /** halved — урон срезан модификатором врага (кольчуга, набожный); guarded — ростовым щитом; quen — поглощён Квеном. */
   | { type: 'enemyHit'; taken: number; absorbed: number; buffed: boolean; firstStrike: boolean; halved: boolean; guarded: boolean; quen: boolean; pierced: boolean; item: ItemId | null }
-  | { type: 'heroHit'; taken: number; absorbed: number; self: boolean }
+  | { type: 'heroHit'; taken: number; absorbed: number; self: boolean; parried?: boolean }
   | { type: 'heroHeal'; amount: number }
   | { type: 'enemyHeal'; amount: number }
   | { type: 'heroBlock'; amount: number }
@@ -1008,7 +1008,7 @@ export class BattleSim {
       return;
     }
     const dmg = (s.damage ?? 0) * p.mult * e.power * enemyDamageMult(e.mod) * (s.monsterMult ?? 1) * (parried ? parryMult : 1);
-    this.damageHero(Math.round(dmg));
+    this.damageHero(Math.round(dmg), parried);
     // Монах получает 5 очков блока за каждый пропущенный кружок креста.
     if (p.kind === 'cross' && ENEMIES[e.id].ritual && !parried) {
       const amount = Math.min(5, ENEMY_BLOCK_MAX - e.block);
@@ -1045,12 +1045,12 @@ export class BattleSim {
   }
 
   /** Урон герою: сначала съедает блок. Возвращает урон по здоровью. */
-  private damageHero(dmg: number): number {
+  private damageHero(dmg: number, parried: boolean): number {
     const absorbed = Math.min(this.block, dmg);
     this.block -= absorbed;
     const taken = dmg - absorbed;
     this.heroHp = Math.max(0, this.heroHp - taken);
-    this.events.push({ type: 'heroHit', taken, absorbed, self: false });
+    this.events.push({ type: 'heroHit', taken, absorbed, self: false, parried });
     return taken;
   }
 

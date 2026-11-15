@@ -5,6 +5,8 @@ import { restoreMute } from '../components/Sound';
 import {
   ASSET_MANIFEST,
   HOME_LAYOUT,
+  homeCutoutKey,
+  SHOP_MERCHANT_KEY,
   HOME_WINDOW_MASK_KEY,
   MENU_ART,
   menuArtKey,
@@ -59,13 +61,15 @@ export class BootScene extends Phaser.Scene {
     // Отсутствующий файл — не ошибка: картинке Boot нарисует заглушку, звук просто не будет играть.
     this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, () => {});
     for (const a of ASSET_MANIFEST) this.load.image(a.key, a.path);
+    for (const [id, c] of Object.entries(HOME_LAYOUT.cutouts)) if (c) this.load.image(homeCutoutKey(id), c.path);
+    this.load.image(SHOP_MERCHANT_KEY, SHOP_LAYOUT.merchantArt.path);
     // Оформление интерфейса — необязательное: нет файла — без заглушки, кнопки и шапка рисуются кодом.
     for (const [s, b] of Object.entries(UI_ART.button)) this.load.image(uiSourceKey(`button_${s}`), b.path);
     this.load.image(uiSourceKey('header'), UI_ART.header.path);
     for (const [id, ic] of Object.entries(UI_ART.icons)) this.load.image(uiSourceKey(id), ic.path);
     this.load.image(uiSourceKey('parchment'), UI_ART.parchment.path);
     this.load.image(RESULTS_PARCHMENT_KEY, 'ui/results_parchment.png');
-    for (const id of ['button', 'logo', 'sliderTrack', 'sliderFill', 'sliderEnds'] as const) this.load.image(menuArtKey(id), MENU_ART[id].path);
+    for (const id of ['button', 'logo', 'sliderTrack', 'sliderFill', 'sliderEnds', 'quickPanel', 'portraitFrame', 'diamondLeft', 'diamondRight', 'headerBar', 'mourningRibbon'] as const) this.load.image(menuArtKey(id), MENU_ART[id].path);
     MENU_ART.eyes.forEach((e, n) => this.load.image(menuEyesKey(n), e.path));
     MENU_ART.shards.forEach((_, n) => this.load.image(menuShardKey(n), `ui/menu/shard_${n}.png`));
     this.load.image(SEAL_STAMP_KEY, SEAL_STAMP_PATH);

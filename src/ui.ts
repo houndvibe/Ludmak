@@ -27,6 +27,7 @@ import {
   type StatIconId,
   MENU_ART,
   menuArtKey,
+  HEADER_ART,
 } from "./config/assets";
 import { CLIENTS, type ClientId } from "./data/clients";
 import { FEEL } from "./config/feel";
@@ -122,16 +123,128 @@ export function addText(
   });
 }
 
+/**
+ * Надпись капителью по макету художницы: заглавные буквы исходного текста — кеглем big, строчные — заглавными
+ * кеглем small, всё на общей базовой линии, с тёмной обводкой и тенью. (x, y) — центр строки. Возвращает ширину.
+ */
+export function addSmallCaps(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  str: string,
+  big: number,
+  small: number,
+  color: string,
+): { width: number; parts: Phaser.GameObjects.Text[] } {
+  const stroke = 3;
+  const runs: { text: string; big: boolean }[] = [];
+  for (const ch of str) {
+    const isBig = ch !== ch.toLowerCase();
+    const last = runs[runs.length - 1];
+    if (last && last.big === isBig) last.text += ch.toUpperCase();
+    else runs.push({ text: ch.toUpperCase(), big: isBig });
+  }
+  const parts = runs.map((r) =>
+    addText(scene, 0, 0, r.text, r.big ? big : small, color, {
+      ...TITLE,
+      stroke: "#000000",
+      strokeThickness: stroke,
+    }).setShadow(0, 3, "#000000", 0, true, true),
+  );
+  const width = parts.reduce((s, t) => s + t.width - stroke, 0) + stroke;
+  // Базовая линия — так, чтобы по центру строки y были заглавные мелкого кегля (их больше всего).
+  const baseY = y + small * 0.36;
+  let cx = x - width / 2;
+  for (const t of parts) {
+    t.setPosition(cx, baseY - t.style.getTextMetrics().ascent);
+    cx += t.width - stroke;
+  }
+  return { width, parts };
+}
+
+/**
+ * Плашка окна художницы (ui/quick_panel.png) девятью кусками — углы и рамка не тянутся; центр (x, y), размер w×h.
+ * Нет картинки — тёмный прямоугольник с рамкой.
+ */
+export function addPanel(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): Phaser.GameObjects.GameObject {
+  if (scene.textures.exists(menuArtKey("quickPanel"))) {
+    const k = 0.75;
+    return scene.add
+      .nineslice(x, y, menuArtKey("quickPanel"), undefined, w / k, h / k, 70, 70, 70, 70)
+      .setScale(k);
+  }
+  return scene.add.rectangle(x, y, w, h, 0x0c0a10, 0.97).setStrokeStyle(2, C.border);
+}
+
+/** Заголовок окна по макету: капитель светлым, ромбы по бокам (если есть картинки). (x, y) — центр строки. */
+export function addPanelTitle(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  title: string,
+  big = 44,
+  small = 33,
+): Phaser.GameObjects.GameObject[] {
+  const t = addSmallCaps(scene, x, y, title, big, small, MENU_ART.buttonTextColor);
+  const out: Phaser.GameObjects.GameObject[] = [...t.parts];
+  for (const [id, side] of [["diamondLeft", -1], ["diamondRight", 1]] as const)
+    if (scene.textures.exists(menuArtKey(id)))
+      out.push(
+        scene.add
+          .image(x + side * (t.width / 2 + 22), y, menuArtKey(id))
+          .setScale(0.75)
+          .setOrigin(side < 0 ? 1 : 0, 0.5),
+      );
+  return out;
+}
+
+/** Текст окна в общем стиле: обводка и тень (цвет и кегль — свои). */
+export function addPanelText(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  str: string,
+  size: number,
+  color: string,
+  title = false,
+): Phaser.GameObjects.Text {
+  return addText(scene, x, y, str, size, color, {
+    ...(title ? TITLE : { fontStyle: "bold" }),
+    align: "center",
+    stroke: "#000000",
+    strokeThickness: 3,
+  })
+    .setOrigin(0.5)
+    .setShadow(0, 2, "#000000", 0, true, true);
+}
+
 export type ButtonTone = "confirm" | "refuse";
 
 /** Кнопка интерфейса с общей рамкой из главного меню. */
 export class Button extends Phaser.GameObjects.Container {
   private bg: Phaser.GameObjects.Rectangle;
   private plate: Phaser.GameObjects.NineSlice | null = null;
+  private glow: Phaser.FX.Glow | undefined;
   private label: Phaser.GameObjects.Text;
   private enabled = true;
   private hovered = false;
   private tone: ButtonTone;
+
+  /** Картинка справа от надписи (например, монета у цены); надпись и картинка вместе — по центру кнопки. */
+  addIcon(key: string, size: number, gap = 10): this {
+    const img = this.scene.add.image(0, 0, key).setDisplaySize(size, size);
+    const total = this.label.width + gap + size;
+    this.label.setX(-total / 2 + this.label.width / 2);
+    img.setX(total / 2 - size / 2);
+    this.add(img);
+    return this;
+  }
 
   constructor(
     scene: Phaser.Scene,
@@ -173,6 +286,8 @@ export class Button extends Phaser.GameObjects.Container {
         )
         .setScale(k);
       this.add(this.plate);
+      const G = FEEL.buttonGlow;
+      this.glow = this.plate.postFX?.addGlow(G.color, 0, 0, false, G.quality, G.distance);
     }
     this.label = addText(
       scene,
@@ -227,6 +342,14 @@ export class Button extends Phaser.GameObjects.Container {
       this.plate.setAlpha(this.enabled ? 1 : 0.5);
       this.label?.setColor(this.enabled ? this.baseColor() : C.dim);
       this.setScale(this.enabled && this.hovered ? 1.04 : 1);
+      if (this.glow) {
+        this.scene.tweens.killTweensOf(this.glow);
+        this.scene.tweens.add({
+          targets: this.glow,
+          outerStrength: this.enabled && this.hovered ? FEEL.buttonGlow.strength : 0,
+          duration: FEEL.buttonGlow.fadeMs,
+        });
+      }
     } else {
       this.bg.setFillStyle(
         !this.enabled ? C.btnOff : this.hovered ? C.btnHover : C.btn,
@@ -298,9 +421,11 @@ export function addVolumeSlider(
         r.labelY ?? r.y - 34,
         "",
         26,
-        MENU_ART.textColor,
-        TITLE,
-      ).setOrigin(0, 0.5)
+        MENU_ART.buttonTextColor,
+        { ...TITLE, stroke: "#000000", strokeThickness: 3 },
+      )
+        .setOrigin(0, 0.5)
+        .setShadow(0, 3, "#000000", 0, true, true)
     : addText(scene, r.x, r.y - 44, "", 24, C.text);
   let show: (v: number) => void;
   if (art) {
@@ -321,7 +446,7 @@ export function addVolumeSlider(
       scene.add.image(r.x + r.w / 2, r.y, menuArtKey("sliderEnds")).setScale(k);
     show = (v: number) => {
       fill.setCrop(0, 0, fill.width * v, fill.height);
-      label.setText(`ГРОМКОСТЬ: ${Math.round(v * 100)}%`);
+      label.setText(`Громкость: ${Math.round(v * 100)}%`);
     };
   } else {
     scene.add
@@ -431,20 +556,27 @@ export function addCoinsAndLives(
   y: number,
 ): () => void {
   const art = scene.textures.exists(uiIconKey("coin"));
+  const bar = scene.textures.exists(menuArtKey("headerBar"));
   const coins = addText(
     scene,
     0,
     y,
     "",
-    art ? 32 : 28,
-    C.accent,
-    art ? { fontStyle: "bold", stroke: "#000000", strokeThickness: 4 } : {},
+    bar ? HEADER_ART.coinSize : art ? 32 : 28,
+    bar ? HEADER_ART.text : C.accent,
+    bar
+      ? { ...TITLE, stroke: "#000000", strokeThickness: 3 }
+      : art
+        ? { fontStyle: "bold", stroke: "#000000", strokeThickness: 4 }
+        : {},
   ).setOrigin(1, 0.5);
+  if (bar) coins.setShadow(0, 3, "#000000", 0, true, true);
   const icon = art ? scene.add.image(0, y, uiIconKey("coin")) : null;
-  icon?.setScale(COIN_PX / icon.height);
+  const coinPx = bar ? HEADER_ART.coinIcon : COIN_PX;
+  icon?.setScale(coinPx / icon.height);
   const refresh = () => {
     coins.setText(art ? `${run.coins}` : `Монеты: ${run.coins}`).setX(x);
-    icon?.setX(coins.x - coins.width - 8 - COIN_PX / 2);
+    icon?.setX(coins.x - coins.width - 8 - coinPx / 2);
   };
   refresh();
   return refresh;
@@ -452,6 +584,12 @@ export function addCoinsAndLives(
 
 /** Фон верхней полосы 80 px: балка художницы (повторяется по ширине), без картинки — тёмная полоса. */
 export function addTopBar(scene: Phaser.Scene): void {
+  if (scene.textures.exists(menuArtKey("headerBar"))) {
+    // Доска художницы на всю ширину; высота — по пропорциям картинки.
+    const img = scene.add.image(W / 2, 0, menuArtKey("headerBar")).setOrigin(0.5, 0);
+    img.setScale(W / img.width);
+    return;
+  }
   if (scene.textures.exists(UI_HEADER_KEY)) {
     const k = 80 / UI_ART.header.band.h;
     scene.add
@@ -463,9 +601,41 @@ export function addTopBar(scene: Phaser.Scene): void {
   }
 }
 
+/** Надпись шапки по макету: слово светлым капсом и число розовым («НОЧЬ 1/5»). x — левый край слова. */
+export function addHeaderPair(
+  scene: Phaser.Scene,
+  x: number,
+  word: string,
+  value: string,
+): { word: Phaser.GameObjects.Text; value: Phaser.GameObjects.Text } {
+  const A = HEADER_ART;
+  const style = { ...TITLE, stroke: "#000000", strokeThickness: 3 };
+  const w = addText(scene, x, A.y, word, A.labelSize, A.text, style)
+    .setOrigin(0, 0.5)
+    .setShadow(0, 3, "#000000", 0, true, true);
+  const v = addText(scene, w.x + w.width + 10, A.y, value, A.labelSize, A.num, style)
+    .setOrigin(0, 0.5)
+    .setShadow(0, 3, "#000000", 0, true, true);
+  return { word: w, value: v };
+}
+
 /** Верхняя полоса: ночь, заголовок и монеты. Возвращает обновление монет. */
 export function addHeader(scene: Phaser.Scene, title: string): () => void {
   addTopBar(scene);
+  if (scene.textures.exists(menuArtKey("headerBar"))) {
+    const A = HEADER_ART;
+    addHeaderPair(scene, A.nightX, "НОЧЬ", `${run.night}/${NIGHTS}`);
+    addHeaderPair(scene, A.levelX, "УРОВЕНЬ", `${heroLevel()}`);
+    const ty = A.y - A.titleUp;
+    const t = addSmallCaps(scene, W / 2, ty, title, A.titleSize, A.titleSmall, A.text);
+    for (const [id, side] of [["diamondLeft", -1], ["diamondRight", 1]] as const)
+      if (scene.textures.exists(menuArtKey(id)))
+        scene.add
+          .image(W / 2 + side * (t.width / 2 + A.diamondGap), ty, menuArtKey(id))
+          .setScale(0.75)
+          .setOrigin(side < 0 ? 1 : 0, 0.5);
+    return addCoinsAndLives(scene, A.coinRight, A.y);
+  }
   addText(
     scene,
     30,

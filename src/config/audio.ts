@@ -4,61 +4,78 @@
 
 export const SOUND_KEYS = [
   // Интерфейс
-  'ui_click',
-  'ui_hover',
+  "ui_click",
+  "ui_hover",
   // Дом
-  'contract_accept',
+  "contract_accept",
   /** Удар печати по листу заказа (нет файла — вместо него contract_accept). */
-  'seal_stamp',
-  'contract_decline',
-  'monster_arrive',
-  'window_close',
-  'door_open',
+  "seal_stamp",
+  "contract_decline",
+  "monster_arrive",
+  "window_close",
+  "door_open",
   // Магазин
-  'shop_buy',
-  'shop_sell',
-  'shop_reroll',
+  "shop_buy",
+  "shop_sell",
+  "shop_reroll",
   // Рюкзак
-  'item_pickup',
-  'item_place',
-  'item_rotate',
-  'item_invalid',
-  'item_merge',
+  "item_pickup",
+  "item_place",
+  "item_rotate",
+  "item_invalid",
+  "item_merge",
   // Бой
-  'hit_hero',
-  'hit_enemy',
-  'sword_hit',
-  'parry',
-  'block',
-  'heal',
-  'self_damage',
-  'bomb',
-  'stun',
-  'item_burn',
-  'item_vanish',
-  'enemy_death',
-  'hero_death',
-  'contract_done',
-  'rest',
-  'retreat',
+  "hit_hero",
+  "hit_enemy",
+  "sword_hit",
+  "sword_spin",
+  "shield_brake",
+  "big_theft",
+  "small_theft",
+  "monk_cross",
+  "rapier_hit",
+  "arstocrat_aim",
+  "aristocrat_shot",
+  "parry",
+  "block",
+  "heal",
+  "self_damage",
+  "bomb",
+  "stun",
+  "item_burn",
+  "item_vanish",
+  "enemy_death",
+  "hero_death",
+  "contract_done",
+  "rest",
+  "retreat",
   // Итоги и конец забега
-  'coins',
-  'level_up',
-  'game_over',
-  'victory',
+  "coins",
+  "level_up",
+  "game_over",
+  "victory",
 ] as const;
 
 export type SoundKey = (typeof SOUND_KEYS)[number];
 
 /** Музыка по кругу: ночь — дом, магазин, рюкзак (и меню, итоги); день — бой. */
-export const MUSIC_KEYS = ['music_night', 'music_day'] as const;
+export const MUSIC_KEYS = ["music_night", "music_day"] as const;
 export type MusicKey = (typeof MUSIC_KEYS)[number];
 
 /** Папка звуков относительно public/assets/ и форматы по порядку попыток. */
-export const AUDIO_DIR = 'audio/';
-export const AUDIO_FORMATS = ['ogg', 'mp3'] as const;
+export const AUDIO_DIR = "audio/";
+export const AUDIO_FORMATS = ["ogg", "mp3"] as const;
 
 // Громкость — в src/config/volume.ts (общая и для каждого звука отдельно).
+/** Небольшая случайная высота повторяющихся звуков: rate в указанном диапазоне (1 — исходный). */
+export const SOUND_RATE_VARIATION: Partial<
+  Record<SoundKey, { min: number; max: number }>
+> = {
+  hit_enemy: { min: 0.94, max: 1.06 },
+  hit_hero: { min: 0.94, max: 1.06 },
+  rapier_hit: { min: 0.94, max: 1.06 },
+};
+
 export const AUDIO = {
   /** Сколько копий одного и того же звука может звучать одновременно; лишние пропускаются. */
   maxCopies: 3,
