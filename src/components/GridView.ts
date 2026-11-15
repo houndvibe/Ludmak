@@ -90,6 +90,8 @@ export interface GridViewConfig<T extends Placement> {
   onPickUp?: (it: T) => void;
   /** 'edit': при перетаскивании появились метки соседства (над соседями или над самим предметом). */
   onLabels?: () => void;
+  /** Превью при перетаскивании больше не показывается (предмет вне сетки, не влезает или его отпустили). */
+  onPreviewOff?: () => void;
   /** 'edit': страница зоны «вне сумок» или число страниц изменились (page с 0). */
   onStashPages?: (page: number, count: number) => void;
   /** 'edit': связи перетаскиваемого предмета, если положить его сюда (превью полосок). */
@@ -110,6 +112,9 @@ class Piece {
   private starText: Phaser.GameObjects.Text;
   /** Метки соседства — отдельно от предмета, в слое над полосками связей (GridView двигает их за предметом). */
   readonly labels: Phaser.GameObjects.Container;
+  /** Внутри labels: кружки эффектов и подсказка над предметом (что он получит от перетаскиваемого). */
+  private badges: Phaser.GameObjects.Container;
+  private tip: Phaser.GameObjects.Container;
   /** Метка основного оружия: золотые клинки в правом верхнем углу. */
   private mainMark: Phaser.GameObjects.Image;
   private fw = 0;
@@ -127,6 +132,9 @@ class Piece {
     this.badge = scene.add.text(0, 0, '', { ...bold, fontSize: '24px' }).setOrigin(1, 1);
     this.starText = scene.add.text(0, 0, '', { ...bold, fontSize: '24px', color: '#ffd45a' }).setOrigin(0, 0);
     this.labels = scene.add.container(0, 0);
+    this.badges = scene.add.container(0, 0);
+    this.tip = scene.add.container(0, 0);
+    this.labels.add([this.badges, this.tip]);
     this.mainMark = scene.add.image(0, 0, statIconKey('parry')).setVisible(false);
     this.cont = scene.add.container(0, 0, [this.img, this.shade, this.rarityFrame, this.frame, this.badge, this.starText, this.mainMark]);
   }
@@ -190,16 +198,52 @@ class Piece {
   }
 
   /** Метки соседства столбиком по центру предмета. */
+  /**
+   * Эффекты соседства значками в левом нижнем углу: зелёный кружок — сколько хороших, красный — сколько плохих.
+   * Фразы — на пергаменте при наведении (FEEL.synergyBadge).
+   */
   setLabels(list: GridLabel[]): void {
-    this.labels.removeAll(true);
-    const lh = 30;
-    list.forEach((l, i) => {
-      const y = (i - (list.length - 1) / 2) * lh;
+    this.badges.removeAll(true);
+    const B = FEEL.synergyBadge;
+    const good = list.filter((l) => l.good).length;
+    const bad = list.length - good;
+    let x = -this.fw / 2 + B.inset + B.r;
+    const y = this.fh / 2 - B.inset - B.r;
+    for (const [n, color] of [[good, B.good], [bad, B.bad]] as const) {
+      if (!n) continue;
+      const c = this.scene.add.circle(x, y, B.r, color).setStrokeStyle(2, 0x000000, 0.9);
       const t = this.scene.add
-        .text(0, y, l.text, { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: '#ffffff', backgroundColor: l.good ? '#2e7d32' : '#b23a3a', padding: { x: 6, y: 2 } })
+        .text(x, y, `${n}`, { fontFamily: FONT, fontSize: `${B.font}px`, fontStyle: 'bold', color: '#ffffff', stroke: '#000', strokeThickness: 3 })
         .setOrigin(0.5);
-      this.labels.add(t);
-    });
+      this.badges.add([c, t]);
+      x += B.r * 2 + B.gap;
+    }
+  }
+
+  /**
+   * Подсказка над предметом, пока рядом тащат другой: что этот предмет получит (строки зелёным и красным, FEEL.synergyTip).
+   * Пустой список — убрать.
+   */
+  setTip(list: GridLabel[]): void {
+    this.tip.removeAll(true);
+    if (!list.length) return;
+    const T = FEEL.synergyTip;
+    // Сначала хорошие строки, потом плохие.
+    const texts = [...list].sort((a, b) => Number(b.good) - Number(a.good)).map((l) =>
+      this.scene.add.text(0, 0, l.text, { fontFamily: FONT, fontSize: `${T.font}px`, fontStyle: 'bold', color: l.good ? T.good : T.bad }).setOrigin(0.5, 0),
+    );
+    const w = Math.max(...texts.map((t) => t.width)) + T.pad * 2;
+    const h = texts.reduce((s, t) => s + t.height, 0) + T.pad * 2;
+    // Над предметом, по центру; низ подсказки — чуть выше верхнего края предмета.
+    const top = -this.fh / 2 - T.gap - h;
+    const bg = this.scene.add.rectangle(0, top, w, h, T.bg, T.bgAlpha).setOrigin(0.5, 0).setStrokeStyle(2, T.border, 0.9);
+    this.tip.add(bg);
+    let y = top + T.pad;
+    for (const t of texts) {
+      t.setY(y);
+      y += t.height;
+      this.tip.add(t);
+    }
   }
 }
 
@@ -562,9 +606,14 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
   /** Метки соседства над предметами: превью при перетаскивании или (null) постоянные метки, если они включены. */
   private showLabels(labels: GridLabels | null): void {
     for (const [uid, p] of this.pieces) {
-      if (this.dragging && uid === this.dragging.uid) p.setLabels(labels?.self ?? []);
-      else if (labels) p.setLabels(labels.neighbors.get(uid) ?? []);
-      else p.setLabels(this.staticLabels?.get(uid) ?? []);
+      // Перетаскиваемый — кружки «что получит здесь»; соседи — свои кружки и подсказка над собой, что дадут им.
+      if (this.dragging && uid === this.dragging.uid) {
+        p.setLabels(labels?.self ?? []);
+        p.setTip([]);
+      } else {
+        p.setLabels(this.staticLabels?.get(uid) ?? []);
+        p.setTip(labels?.neighbors.get(uid) ?? []);
+      }
     }
     if (labels && (labels.self.length > 0 || [...labels.neighbors.values()].some((l) => l.length > 0))) this.cfg.onLabels?.();
   }
@@ -692,6 +741,7 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     const it = this.item(this.dragging.uid)!;
     if (!this.overGrid(it)) {
       this.drawLinks();
+      this.cfg.onPreviewOff?.();
       return this.showLabels(null);
     }
 
@@ -714,6 +764,7 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     g.fillStyle(ok ? 0x4caf50 : 0xe05050, 0.4);
     this.fillCells(g, col, row, f.w, f.h);
     this.showLabels(ok && this.cfg.preview ? this.cfg.preview(it, col, row, it.rotated) : null);
+    if (!ok) this.cfg.onPreviewOff?.();
     // Превью связей: где встанет предмет — яркие полоски с цепью.
     if (ok && this.cfg.previewLinks) {
       this.previewRect = { col, row, w: f.w, h: f.h };
@@ -753,6 +804,7 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     this.previewLinks = [];
     this.previewRect = null;
     this.showLabels(null);
+    this.cfg.onPreviewOff?.();
     if (toZone) {
       // Отпустили над полем (основное оружие): предмет остаётся, где был.
       Object.assign(it, { ...saved, uid: it.uid });

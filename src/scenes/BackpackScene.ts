@@ -7,7 +7,7 @@ import { FEEL } from '../config/feel';
 import { GridView, type GridLabel, type GridLabels } from '../components/GridView';
 import { CATEGORY_NAMES, ITEMS } from '../data/items';
 import { canPlace, MASK, type OwnedItem } from '../systems/backpack';
-import { computePower, gearSummary, pairLinks, starOf, starStats, type PowerResult } from '../systems/synergy';
+import { computePower, gearSummary, pairLinks, starOf, starStats, type AppliedEffect, type PowerResult } from '../systems/synergy';
 import { tutorialAttach, tutorialDone } from '../components/Hints';
 import { playMusic, sfx } from '../components/Sound';
 import { canBeMain, canMerge, mainItem, mergedPreview, mergeItems, run, setMain } from '../state';
@@ -47,26 +47,6 @@ const INK = { title: MENU_ART.buttonTextColor, dim: '#a89a84' };
 const PANEL_TITLE = { ...TITLE, stroke: '#000000', strokeThickness: 3, shadow: { offsetX: 0, offsetY: 2, color: '#000000', blur: 0, fill: true, stroke: true } };
 const PANEL = { pad: 16, chipH: 38, chipIcon: 28, chipGap: 8, chipFont: 22, tipW: 440 };
 
-/** Галочка «Скрыть эффекты соседства» — запоминается в браузере. */
-const HIDE_LABELS_KEY = 'ludmak.hideSynergyLabels';
-let hideSynergyLabels = false;
-
-function loadHideLabels(): boolean {
-  try {
-    return window.localStorage.getItem(HIDE_LABELS_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function saveHideLabels(v: boolean): void {
-  try {
-    window.localStorage.setItem(HIDE_LABELS_KEY, v ? '1' : '0');
-  } catch {
-    // нет хранилища — запомнится до перезагрузки
-  }
-}
-
 export class BackpackScene extends Phaser.Scene {
   private view!: GridView<OwnedItem>;
   /** Содержимое пергамента (пересобирается) и подсказка к его плашкам. */
@@ -104,7 +84,6 @@ export class BackpackScene extends Phaser.Scene {
     ).setShadow(0, 2, '#000000', 0, true, true);
     this.mainSlot = this.add.container(0, 0).setDepth(11);
     this.mainGlow = null;
-    this.addHideLabelsCheckbox();
 
     // «Вне сумок» — внутренность сундука на фоне; страницы — на крышке.
     const s = L.stash;
@@ -228,6 +207,7 @@ export class BackpackScene extends Phaser.Scene {
       onMerge: (a, b) => mergeItems(a.uid, b.uid),
       // Превью слияния: пергамент показывает цель после слияния, соседи — что у них изменится.
       onMergeHover: (a, b) => {
+        this.dragPanelKey = ''; // после превью слияния превью места рисуется заново
         this.mergePreview = a && b ? { dragged: a, target: b } : null;
         if (this.mergePreview) this.drawMergePanel();
         else this.showPanel(this.shownItem);
@@ -243,6 +223,12 @@ export class BackpackScene extends Phaser.Scene {
         if (tutorialPurchase?.inGrid) tutorialDone(this, 'stashToBag');
       },
       onStashPages: showPages,
+      // Превью перетаскивания закончилось — пергамент снова показывает обычное описание.
+      onPreviewOff: () => {
+        if (!this.dragPanelKey) return;
+        this.dragPanelKey = '';
+        this.showPanel(this.shownItem);
+      },
       linkHover: true,
       // Превью связей: связи перетаскиваемого предмета там, куда его кладут.
       previewLinks: (it, col, row, rotated) => {
@@ -345,7 +331,17 @@ export class BackpackScene extends Phaser.Scene {
   private previewLabels(it: OwnedItem, col: number, row: number, rotated: boolean): GridLabels {
     const moved = { ...it, inGrid: true, col, row, rotated };
     const items = run.items.map((i) => (i.uid === it.uid ? moved : i));
-    const { effects } = computePower(items);
+    const power = computePower(items);
+    const { effects } = power;
+    // Пергамент: перетаскиваемый предмет «если положить сюда» и что он даст соседям (перерисовка — только при смене места).
+    const key = `${it.uid}:${col}:${row}:${rotated}`;
+    if (key !== this.dragPanelKey) {
+      this.dragPanelKey = key;
+      this.tip.setVisible(false);
+      for (const o of this.panelObjs) o.destroy();
+      this.panelObjs = [];
+      this.drawItemInfo(moved, power);
+    }
     const neighbors = new Map<number, GridLabel[]>();
     const self: GridLabel[] = [];
     for (const e of effects) {
@@ -356,56 +352,11 @@ export class BackpackScene extends Phaser.Scene {
     return { neighbors, self };
   }
 
-  /**
-   * Галочка «Скрыть эффекты соседства»: убирает постоянные метки на предметах (превью при перетаскивании остаётся).
-   * Выбор запоминается в браузере; хранилище может быть недоступно — тогда метки показываются.
-   */
-  private addHideLabelsCheckbox(): void {
-    const r = BACKPACK_LAYOUT.hideLabels;
-    hideSynergyLabels = loadHideLabels();
-    // Строка внизу панели «Сила снаряжения»: квадратик слева (r.x — его левый край), подпись справа от него.
-    const ink = MENU_ART.buttonTextColor;
-    const boxX = r.x + r.size / 2;
-    this.add.rectangle(boxX, r.y, r.size, r.size, 0x0e0c12, 0.7).setStrokeStyle(2, 0xb7a58a, 0.8);
-    const mark = addText(this, boxX, r.y, '✔', Math.round(r.size * 0.75), ink, { fontStyle: 'bold' }).setOrigin(0.5);
-    const label = addText(this, r.x + r.size + 12, r.y, 'Скрыть эффекты соседства', 24, ink, { ...TITLE, stroke: '#000000', strokeThickness: 3 })
-      .setOrigin(0, 0.5)
-      .setShadow(0, 2, '#000000', 0, true, true);
-    const show = () => mark.setVisible(hideSynergyLabels);
-    show();
-    // Нажимается и квадратик, и подпись.
-    const hit = this.add
-      .rectangle(r.x - 6, r.y, r.size + 12 + label.width + 12, r.size + 12, 0xffffff, 0.001)
-      .setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true });
-    hit.on('pointerover', () => label.setColor('#e0b65a'));
-    hit.on('pointerout', () => label.setColor(ink));
-    hit.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (p.button !== 0) return;
-      hideSynergyLabels = !hideSynergyLabels;
-      saveHideLabels(hideSynergyLabels);
-      sfx(this, 'ui_click');
-      show();
-      this.refresh();
-    });
-  }
-
   /** Постоянные метки: что каждый предмет в сумках получает от соседей; одинаковые склеиваются в «×N». */
   private staticLabels(): Map<number, GridLabel[]> | null {
-    if (hideSynergyLabels) return null;
-    const byTarget = new Map<number, Map<string, { label: GridLabel; n: number }>>();
-    for (const e of this.power.effects) {
-      const m = byTarget.get(e.target) ?? new Map();
-      byTarget.set(e.target, m);
-      const key = `${e.good}|${e.label}`;
-      const cur = m.get(key);
-      if (cur) cur.n++;
-      else m.set(key, { label: { text: e.label, good: e.good }, n: 1 });
-    }
+    // Каждый эффект от каждого соседа — отдельно: кружки считают их все (два соседа-оружия — два замедления).
     const out = new Map<number, GridLabel[]>();
-    for (const [uid, m] of byTarget) {
-      out.set(uid, [...m.values()].map(({ label, n }) => (n > 1 ? { ...label, text: `${label.text} ×${n}` } : label)));
-    }
+    for (const e of this.power.effects) out.set(e.target, [...(out.get(e.target) ?? []), { text: e.label, good: e.good }]);
     return out;
   }
 
@@ -476,6 +427,7 @@ export class BackpackScene extends Phaser.Scene {
 
   /** Пересобрать пергамент: uid — описание предмета, null — сила снаряжения. */
   private showPanel(uid: number | null): void {
+    if (this.dragPanelKey) return; // пока тащат над сеткой — пергамент занят превью «если положить сюда»
     this.shownItem = uid;
     if (this.mergePreview) return this.drawMergePanel();
     this.tip.setVisible(false);
@@ -574,7 +526,7 @@ export class BackpackScene extends Phaser.Scene {
       y += t.height + 8;
     }
     if (g.explosive.length) {
-      this.chipRow(
+      y = this.chipRow(
         y,
         g.explosive.map((e) => {
           const pct = Math.round(e.chance * 100);
@@ -586,12 +538,72 @@ export class BackpackScene extends Phaser.Scene {
             hint: `${ITEMS[e.id].name} — шумный предмет рядом с огнём: в бою может взорваться (шанс ${pct}%) и ранить героя. Убери огонь от него.`,
           };
         }),
+      ) + 8;
+    }
+    this.drawSynergyList(y);
+  }
+
+  /**
+   * Соседство в «Силе снаряжения»: «кто получил ← от кого: эффекты»; соседи, давшие предмету одно и то же, — в одной
+   * строке через запятую. Зелёная — всё хорошее, красная — всё плохое, жёлтая — смешано. Не влезло — «…и ещё N».
+   */
+  private drawSynergyList(y: number): void {
+    const r = BACKPACK_LAYOUT.power;
+    const x = r.x + PANEL.pad;
+    const bottom = r.y + r.h - PANEL.pad;
+    // Сначала пары «цель — источник», потом склеиваем источники с одинаковым набором эффектов у одной цели.
+    // Хорошие и плохие эффекты — отдельными строками: сначала все зелёные, потом все красные.
+    const byPair = new Map<string, { target: number; source: number; list: AppliedEffect[] }>();
+    for (const e of this.power.effects) {
+      if (e.source === e.target) continue;
+      const key = `${e.target}:${e.source}:${e.good}`;
+      const cur = byPair.get(key) ?? { target: e.target, source: e.source, list: [] };
+      cur.list.push(e);
+      byPair.set(key, cur);
+    }
+    const pairs = new Map<string, { target: number; sources: number[]; list: AppliedEffect[] }>();
+    for (const p of byPair.values()) {
+      const key = `${p.target}|${p.list.map((e) => `${e.good}:${e.label}`).join(';')}`;
+      const cur = pairs.get(key);
+      if (cur) cur.sources.push(p.source);
+      else pairs.set(key, { target: p.target, sources: [p.source], list: p.list });
+    }
+    if (!pairs.size) return;
+    const name = (uid: number) => {
+      const it = run.items.find((i) => i.uid === uid);
+      return it ? ITEMS[it.id].name : '?';
+    };
+    const title = this.keep(addText(this, x, y, 'Соседство', 22, INK.title, PANEL_TITLE));
+    y += title.height + 2;
+    const rows = [...pairs.values()].sort((a, b) => Number(b.list[0].good) - Number(a.list[0].good));
+    for (let i = 0; i < rows.length; i++) {
+      const p = rows[i];
+      const good = p.list.every((e) => e.good);
+      const bad = p.list.every((e) => !e.good);
+      const t = this.keep(
+        addText(this, x, y, `• ${name(p.target)} ← ${p.sources.map(name).join(', ')}: ${p.list.map((e) => e.label).join(', ')}${p.sources.length > 1 ? ` (×${p.sources.length})` : ''}`, 18, good ? C.good : bad ? C.bad : C.accent, {
+          wordWrap: { width: r.w - 2 * PANEL.pad },
+        }),
       );
+      // Последняя строка, что ещё влезает: если дальше есть пары и места нет — вместо неё «…и ещё N».
+      if (y + t.height > bottom || (i < rows.length - 1 && y + t.height + 24 > bottom)) {
+        t.setText(`…и ещё ${rows.length - i} — наведи на предмет, чтобы увидеть всё`).setColor(INK.dim);
+        break;
+      }
+      this.withTip(t, p.list.map((e) => `«${e.rule.title}»: ${e.label}`).join('\n'));
+      y += t.height + 3;
     }
   }
 
   /** Предмет: имя и категория, характеристики значками (с соседями), от кого что пришло, отключён ли. */
-  private drawItemInfo(it: OwnedItem): void {
+  /** Пергамент сейчас показывает превью перетаскивания для этого места ('' — нет). */
+  private dragPanelKey = '';
+
+  /**
+   * Описание предмета на пергаменте. preview — расчёт «если положить сюда» (при перетаскивании); что предмет даст соседям —
+   * подсказками над ними на сетке.
+   */
+  private drawItemInfo(it: OwnedItem, preview?: ReturnType<typeof computePower>): void {
     const r = BACKPACK_LAYOUT.power;
     const x = r.x + PANEL.pad;
     const d = ITEMS[it.id];
@@ -600,7 +612,8 @@ export class BackpackScene extends Phaser.Scene {
     const cat = this.keep(fit(this.add.image(x + 16, name.y + name.height / 2, categoryKey(d.category)), 32, 32));
     this.withTip(cat, `Категория: ${CATEGORY_NAMES[d.category]}`);
 
-    const p = it.inGrid ? this.power.powers.get(it.uid) : undefined;
+    const power = preview ?? this.power;
+    const p = it.inGrid ? power.powers.get(it.uid) : undefined;
     const base = p?.base ?? starStats(it.id, star);
     const final = p?.final ?? base;
     // Итог с соседями; где число изменилось — зелёным или красным, а в подсказке — сколько было без соседей.
@@ -628,7 +641,8 @@ export class BackpackScene extends Phaser.Scene {
     };
     if (!it.inGrid) return line('Вне сумок — в бою не участвует.', INK.dim);
     if (!p) return;
-    for (const e of p.received) {
+    // Сначала хорошие (зелёные), потом плохие (красные) — как в списке «Силы снаряжения».
+    for (const e of [...p.received].sort((a, b) => Number(b.good) - Number(a.good))) {
       const src = run.items.find((i) => i.uid === e.source);
       const srcName = src ? ITEMS[src.id].name : '?';
       line(`• ${srcName}: ${e.label}`, e.good ? C.good : C.bad, `Соседство «${e.rule.title}» от предмета «${srcName}».`);
