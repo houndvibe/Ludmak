@@ -221,50 +221,64 @@ export interface PortraitLifeArt {
   dripZone?: { x: [number, number]; y: [number, number] };
 }
 export const PORTRAIT_LIFE: Record<string, PortraitLifeArt> = {
-  [clientKey("leshy")]: { eyes: [{ x: 451, y: 568 }, { x: 687, y: 566 }], eyeColor: 0xb8ff3a, moteColor: 0xd8ff7a },
+  // Координаты и зоны частиц — в пикселях текущих портретов, не старых исходников 1024×1280.
+  [clientKey("leshy")]: {
+    eyes: [{ x: 141, y: 119 }, { x: 198, y: 121 }],
+    eyeColor: 0x8fdcff,
+    eyeStrength: 0.55,
+    moteColor: 0xb8e89a,
+  },
   [clientKey("vodyanoy")]: {
-    eyes: [{ x: 425, y: 413 }, { x: 728, y: 418 }],
+    eyes: [{ x: 176, y: 151 }, { x: 267, y: 138 }],
     eyeColor: 0xffd860,
-    eyeStrength: 0.45,
+    eyeStrength: 0.35,
     particles: "drip",
     moteColor: 0xcfe8ff,
-    dripZone: { x: [0.22, 0.78], y: [0.55, 0.72] },
+    dripZone: { x: [0.35, 0.65], y: [0.45, 0.48] },
   },
-  // Гуль: тусклые янтарные глаза, могильный туман снизу.
+  // Гуль: тусклые глаза и могильный туман снизу.
   [clientKey("gul")]: {
-    eyes: [{ x: 450, y: 424 }, { x: 686, y: 424 }],
-    eyeColor: 0xffa040,
-    eyeStrength: 0.5,
+    eyes: [{ x: 142, y: 89 }, { x: 198, y: 101 }],
+    eyeColor: 0xffb060,
+    eyeStrength: 0.35,
     particles: "mist",
     moteColor: 0xb4c4aa,
   },
-  // Кикимора: жадный блеск — звёздочки вспыхивают в глазах.
+  // Кикимора: короткие блики в глазах.
   [clientKey("kikimora")]: {
-    eyes: [{ x: 440, y: 452 }, { x: 706, y: 452 }],
+    eyes: [{ x: 180, y: 132 }, { x: 239, y: 142 }],
     eyeColor: 0xffb050,
-    eyeStrength: 0.5,
+    eyeStrength: 0.35,
     particles: "sparkle",
-    sparkles: [{ x: 452, y: 444 }, { x: 714, y: 444 }],
+    sparkles: [{ x: 180, y: 132 }, { x: 239, y: 142 }],
     moteColor: 0xfff0b0,
   },
-  // Призрак: бледные глаза, по фигуре проходит мерцание, вокруг — бледный туман.
+  // Призрак: холодные глаза, мерцание фигуры и туман.
   [clientKey("prizrak")]: {
-    eyes: [{ x: 455, y: 460 }, { x: 660, y: 458 }],
+    eyes: [{ x: 154, y: 127 }, { x: 208, y: 127 }],
     eyeColor: 0xbfe0ff,
-    eyeStrength: 0.6,
+    eyeStrength: 0.45,
     particles: "mist",
     moteColor: 0xc8dcff,
     shimmer: true,
   },
-  // Упырь: красноватые глаза, с клыков капает кровь.
+  // Упырь: тёмно-красные глаза и кровь с клыков.
   [clientKey("upyr")]: {
-    eyes: [{ x: 403, y: 420 }, { x: 694, y: 376 }],
+    eyes: [{ x: 111, y: 142 }, { x: 172, y: 142 }],
     eyeColor: 0xff3a2a,
-    eyeStrength: 0.6,
+    eyeStrength: 0.4,
     particles: "drip",
     particleCount: 2,
     moteColor: 0xa01010,
-    dripZone: { x: [0.49, 0.62], y: [0.5, 0.52] },
+    dripZone: { x: [0.43, 0.61], y: [0.56, 0.59] },
+  },
+  // Безголовый: глаз нет — редкие голубые вспышки вдоль огня над шеей.
+  [clientKey("headless")]: {
+    eyes: [],
+    eyeColor: 0x8fdcff,
+    particles: "sparkle",
+    sparkles: [{ x: 165, y: 30 }, { x: 155, y: 85 }, { x: 177, y: 125 }],
+    moteColor: 0x8fdcff,
   },
 };
 
