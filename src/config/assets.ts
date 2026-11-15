@@ -283,6 +283,13 @@ export const PORTRAIT_LIFE: Record<string, PortraitLifeArt> = {
 };
 
 export const HOME_LAYOUT = {
+  /** Источники света и блик на подкове для живого фона (экранные координаты 1920×1080). */
+  life: {
+    oven: { x: 45, y: 720 },
+    window: { x: 1490, y: 130 },
+    stable: { x: 1870, y: 650 },
+    horseshoe: { x: 1815, y: 185 },
+  },
   /** Дверь целиком (зона клика «На охоту / Переждать день»). */
   door: { x: 753, y: 198, w: 368, h: 775 },
   /**
@@ -357,6 +364,9 @@ export const HEADER_ART = {
   barH: 80,
   nightX: 39,
   levelX: 264,
+  /** Переключатель кнопки парирования справа от центрального заголовка. */
+  parryX: 1470,
+  parryW: 240,
   labelSize: 34,
   titleSize: 44,
   titleSmall: 33,

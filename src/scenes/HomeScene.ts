@@ -40,7 +40,7 @@ import {
   type StepTarget,
 } from "../components/Hints";
 import type { StepId } from "../data/tutorial";
-import { addPortrait } from "../components/PortraitLife";
+import { addPortrait, ensureGlowTexture, GLOW_KEY } from "../components/PortraitLife";
 import { EnemyTooltip } from "../components/EnemyTooltip";
 import { playMusic, sfx } from "../components/Sound";
 import {
@@ -96,6 +96,70 @@ export class HomeScene extends Phaser.Scene {
   private cardReady = false;
   private queueShown = false;
 
+  /** Свет и дымка поверх фона, но под всеми элементами ночного интерфейса. */
+  private addHomeAmbience(): void {
+    ensureGlowTexture(this);
+    const F = FEEL.homeLife;
+    const P = HOME_LAYOUT.life;
+    const glow = (x: number, y: number, w: number, h: number, color: number, alpha: number) =>
+      this.add.image(x, y, GLOW_KEY)
+        .setDisplaySize(w, h)
+        .setTint(color)
+        .setAlpha(alpha)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(1);
+    const pulse = (img: Phaser.GameObjects.Image, alpha: [number, number], periodMs: number, delay = 0) => {
+      img.setAlpha(alpha[0]);
+      this.tweens.add({ targets: img, alpha: alpha[1], duration: periodMs, delay, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    };
+
+    // Печь: большой отблеск на стене и более живой огонь в самом проёме.
+    pulse(glow(P.oven.x, P.oven.y, F.oven.w, F.oven.h, F.oven.color, 0), F.oven.alpha, F.oven.periodMs);
+    pulse(
+      glow(P.oven.x + 35, P.oven.y + 40, F.oven.coreW, F.oven.coreH, F.oven.color, 0),
+      F.oven.coreAlpha,
+      F.oven.corePeriodMs,
+      350,
+    );
+
+    // Оконный проём и направленный вниз влево луч холодного света.
+    pulse(glow(P.window.x, P.window.y, F.window.w, F.window.h, F.window.color, 0), F.window.alpha, F.window.periodMs);
+    const ray = glow(P.window.x, P.window.y, F.window.rayW, F.window.rayH, F.window.color, 0)
+      .setOrigin(0.5, 0.05)
+      .setAngle(F.window.rayAngle);
+    pulse(ray, F.window.rayAlpha, F.window.rayPeriodMs, 700);
+
+    // Конюшня: холодный свет в глубине и медленно ползущая по полу дымка.
+    pulse(glow(P.stable.x, P.stable.y, F.stable.w, F.stable.h, F.stable.color, 0), F.stable.alpha, F.stable.periodMs, 900);
+    const mist = glow(P.stable.x, P.stable.y + F.stable.h * 0.38, F.stable.mistW, F.stable.mistH, F.stable.color, 0);
+    pulse(mist, F.stable.mistAlpha, F.stable.mistPeriodMs);
+    this.tweens.add({
+      targets: mist,
+      x: mist.x - F.stable.mistDriftPx,
+      duration: F.stable.mistPeriodMs,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+
+    // Подкова не светится постоянно: короткая звёздчатая вспышка раз в несколько секунд.
+    const sparkle = [
+      glow(P.horseshoe.x, P.horseshoe.y, F.horseshoe.size * 0.55, F.horseshoe.size * 0.55, F.horseshoe.color, 0),
+      glow(P.horseshoe.x, P.horseshoe.y, F.horseshoe.size, 8, F.horseshoe.color, 0),
+      glow(P.horseshoe.x, P.horseshoe.y, 8, F.horseshoe.size, F.horseshoe.color, 0),
+    ];
+    sparkle.forEach((img, i) => this.tweens.add({
+      targets: img,
+      alpha: F.horseshoe.alpha,
+      duration: F.horseshoe.flashMs,
+      delay: i * 45,
+      yoyo: true,
+      repeat: -1,
+      repeatDelay: F.horseshoe.pauseMs,
+      ease: "Sine.easeOut",
+    }));
+  }
+
   create(): void {
     fadeIn(this);
     playMusic(this, "music_night");
@@ -109,6 +173,7 @@ export class HomeScene extends Phaser.Scene {
     this.leaving = false;
 
     addBackground(this, BG_HOME_KEY);
+    this.addHomeAmbience();
     this.refreshHeader = addHeader(this, "Дом Людьмака");
 
     // Окошко: всё, что в нём показывается, обрезается по форме проёма — маска с картинки фона (неровные края);

@@ -265,6 +265,27 @@ export function setSlowCircles(v: boolean): void {
   }
 }
 
+// ─── Кнопка парирования (переключатель в меню, localStorage) ─────────────────
+
+const PARRY_BUTTON_KEY = 'ludmak.parryLeftButton';
+
+/** false — ПКМ по умолчанию; true — ЛКМ, удобно для тачпада. */
+export function isParryLeftButton(): boolean {
+  try {
+    return window.localStorage.getItem(PARRY_BUTTON_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function setParryLeftButton(v: boolean): void {
+  try {
+    window.localStorage.setItem(PARRY_BUTTON_KEY, v ? '1' : '0');
+  } catch {
+    // нет хранилища — выбор сохранится только до перезагрузки
+  }
+}
+
 // ─── Очередь у двери ─────────────────────────────────────────────────────────
 
 export function currentVisitor(): Contract | null {

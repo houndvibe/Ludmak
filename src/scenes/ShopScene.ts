@@ -232,7 +232,7 @@ export class ShopScene extends Phaser.Scene {
       new Button(this, R.x + R.w / 2 - 50, R.y, 100, R.h, '▶', () => turn(1), 36).setEnabled(this.offersPage < offerPages - 1);
       addText(this, R.x, R.y, `DEBUG · все предметы\nстр. ${this.offersPage + 1} из ${offerPages}`, 22, C.accent, { align: 'center' }).setOrigin(0.5);
     }
-    new Button(this, L.home.x, L.home.y, L.home.w, L.home.h, 'ДОМОЙ →', () => {
+    new Button(this, L.home.x, L.home.y, L.home.w, L.home.h, 'ВЕРНУТЬСЯ →', () => {
       tutorialDone(this, 'shopHome');
       goto(this, 'Home');
     }, 32);

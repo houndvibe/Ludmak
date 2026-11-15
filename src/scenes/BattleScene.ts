@@ -17,12 +17,13 @@ import { BattleSim, type AttackKind, type BattleEvent, type EnemySlot } from '..
 import { ENEMY_ITEMS, type EnemyItemId } from '../data/enemyItems';
 import { footprint, MASK, rectMask, type OwnedItem } from '../systems/backpack';
 import { pairLinks, starOf } from '../systems/synergy';
-import { isSlowCircles, dayChain, destroyItem, finalChain, resolveFinal, resolveNight, retreatPenalty, run, spendCharge, type DayOutcome } from '../state';
+import { isParryLeftButton, isSlowCircles, dayChain, destroyItem, finalChain, resolveFinal, resolveNight, retreatPenalty, run, spendCharge, type DayOutcome } from '../state';
 import {
   addBackground,
   addHorse,
   addModifierBadge,
   addTopBar,
+  addParryButton,
   addHeaderPair,
   addPanel,
   addPanelText,
@@ -84,6 +85,10 @@ export class BattleScene extends Phaser.Scene {
   private progressText!: Phaser.GameObjects.Text;
   private conditionText!: Phaser.GameObjects.Text;
   private info!: Phaser.GameObjects.Text;
+  /** Подсказка внизу: пустая — скрыта, иначе её чёрный фон с отступами виден пустым прямоугольником. */
+  private setInfo(text: string): void {
+    this.info.setText(text).setVisible(text !== '');
+  }
   private overlay: Phaser.GameObjects.Container | null = null;
   /** uid → предмет героя (событие heroItem несёт только uid, а бомбе нужен звук и тряска). */
   private itemIds = new Map<number, ItemId>();
@@ -178,6 +183,7 @@ export class BattleScene extends Phaser.Scene {
 
     addBackground(this, BG_BATTLE_KEY);
     addTopBar(this);
+    addParryButton(this);
     const artHeader = this.textures.exists(menuArtKey('headerBar'));
     if (artHeader) {
       // Шапка по макету: «НОЧЬ 1/5», «УСКОРЕНИЕ ×1» (текстом, нажимается), по центру — ход заказа.
@@ -240,7 +246,8 @@ export class BattleScene extends Phaser.Scene {
       padding: { x: 10, y: 6 },
     })
       .setOrigin(0.5, 1)
-      .setDepth(70);
+      .setDepth(70)
+      .setVisible(false);
 
     // Людьмак: портрет, справа от него имя, здоровье, статусы.
     const hp = L.heroPortrait;
@@ -290,7 +297,7 @@ export class BattleScene extends Phaser.Scene {
         frame: itemRarityFrame(it.id),
       }),
       describe: (it) => describeOwnedItem(it, this.sim.powers, this.sim.items),
-      onHover: (t) => this.info.setText(t ?? ''),
+      onHover: (t) => this.setInfo(t ?? ''),
       onClick: (it) => {
         if (!this.sim.useActive(it.uid)) return;
         tutorialDone(this, 'useActive');
@@ -759,8 +766,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private onBattleClick(p: Phaser.Input.Pointer): void {
-    // Парирование — правой кнопкой мыши (клинок прокручивается на 360° вокруг рукояти). Левая кнопка ничего не делает.
-    if (p.button !== 2) return;
+    // Кнопка выбирается в меню: ПКМ по умолчанию или ЛКМ для тачпада.
+    if (p.button !== (isParryLeftButton() ? 0 : 2)) return;
     // Точка удара — где нарисован курсор (с отбросом от прицела). Клик по прицелу — новый отброс, не удар.
     const kicked = !!(this.kick.x || this.kick.y);
     const q = this.cursorAt(p);
@@ -1294,8 +1301,8 @@ export class BattleScene extends Phaser.Scene {
       const b = L.modifierBadge;
       const badge = addModifierBadge(this, ep.x + ep.w / 2 + b.dx, ep.y - ep.h / 2 + b.dy, b.r, mod).setDepth(20);
       badge.setInteractive({ useHandCursor: true });
-      badge.on('pointerover', () => this.info.setText(`${MODIFIERS[mod].name}: ${modifierEffect(mod)}`));
-      badge.on('pointerout', () => this.info.setText(''));
+      badge.on('pointerover', () => this.setInfo(`${MODIFIERS[mod].name}: ${modifierEffect(mod)}`));
+      badge.on('pointerout', () => this.setInfo(''));
       this.modBadge = badge;
     }
     this.drawEnemyDeck();
@@ -1332,7 +1339,7 @@ export class BattleScene extends Phaser.Scene {
       items: () => sim.enemy.slots,
       shape: (s) => ({ w: s.def.w, h: s.def.h, key: enemyItemKey(s.def.id) }),
       describe: (s) => `${s.def.name}: ${describeEnemyItem(s.def.id, mod)}${s.boost ? ` · от подковы +${Math.round(s.boost * 100)}% (уже в уроне)` : ''}`,
-      onHover: (t) => this.info.setText(t ?? ''),
+      onHover: (t) => this.setInfo(t ?? ''),
     });
     if (old) {
       view.setAlpha(0);

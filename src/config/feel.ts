@@ -413,6 +413,23 @@ export const FEEL = {
     mist: { y: 0.8, w: 1500, h: 260, color: 0x9a8a4a, alpha: [0.06, 0.14] as [number, number], periodMs: 5200 },
   },
 
+  /** Живой фон дома: тёплая печь, холодные окна и редкий блик подковы. Размеры — px экрана. */
+  homeLife: {
+    oven: {
+      w: 440, h: 640, color: 0xff7a32, alpha: [0.1, 0.24] as [number, number], periodMs: 2100,
+      coreW: 180, coreH: 260, coreAlpha: [0.12, 0.3] as [number, number], corePeriodMs: 1550,
+    },
+    window: {
+      w: 450, h: 300, color: 0x8fb7d9, alpha: [0.06, 0.14] as [number, number], periodMs: 4600,
+      rayW: 620, rayH: 900, rayAngle: 18, rayAlpha: [0.025, 0.07] as [number, number], rayPeriodMs: 6100,
+    },
+    stable: {
+      w: 500, h: 850, color: 0x769fc8, alpha: [0.045, 0.12] as [number, number], periodMs: 5400,
+      mistW: 500, mistH: 180, mistAlpha: [0.025, 0.075] as [number, number], mistPeriodMs: 6800, mistDriftPx: 22,
+    },
+    horseshoe: { color: 0xffe5a3, size: 82, alpha: 0.85, flashMs: 190, pauseMs: 4800 },
+  },
+
   /** Итоги ночи: звуки «монеты → новый уровень» идут по очереди с этим шагом, мс. */
   resultsSoundStepMs: 600,
 };

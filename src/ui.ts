@@ -62,7 +62,7 @@ import {
   starStats,
   type ItemPower,
 } from "./systems/synergy";
-import { heroLevel, run } from "./state";
+import { heroLevel, isParryLeftButton, run, setParryLeftButton } from "./state";
 import type { EnemyTooltip } from "./components/EnemyTooltip";
 
 export const W = 1920;
@@ -227,10 +227,40 @@ export function addPanelText(
 export type ButtonTone = "confirm" | "refuse";
 
 /** Кнопка интерфейса с общей рамкой из главного меню. */
+/**
+ * Золотое свечение рамки при наведении. postFX — отдельный полноэкранный проход рендера каждый кадр, даже при силе 0,
+ * поэтому эффект висит на рамке только пока она светится: включили — добавили, погасло — сняли.
+ */
+export function hoverGlow(
+  scene: Phaser.Scene,
+  target: Phaser.GameObjects.NineSlice,
+): (on: boolean) => void {
+  const G = FEEL.buttonGlow;
+  let glow: Phaser.FX.Glow | undefined;
+  return (on: boolean) => {
+    if (!target.postFX || !target.active) return;
+    if (glow) scene.tweens.killTweensOf(glow);
+    if (!on && !glow) return;
+    if (on && !glow)
+      glow = target.postFX.addGlow(G.color, 0, 0, false, G.quality, G.distance);
+    const fx = glow!;
+    scene.tweens.add({
+      targets: fx,
+      outerStrength: on ? G.strength : 0,
+      duration: G.fadeMs,
+      onComplete: () => {
+        if (on || glow !== fx || !target.active) return;
+        target.postFX.remove(fx);
+        glow = undefined;
+      },
+    });
+  };
+}
+
 export class Button extends Phaser.GameObjects.Container {
   private bg: Phaser.GameObjects.Rectangle;
   private plate: Phaser.GameObjects.NineSlice | null = null;
-  private glow: Phaser.FX.Glow | undefined;
+  private glow: (on: boolean) => void = () => {};
   private label: Phaser.GameObjects.Text;
   private enabled = true;
   private hovered = false;
@@ -286,8 +316,7 @@ export class Button extends Phaser.GameObjects.Container {
         )
         .setScale(k);
       this.add(this.plate);
-      const G = FEEL.buttonGlow;
-      this.glow = this.plate.postFX?.addGlow(G.color, 0, 0, false, G.quality, G.distance);
+      this.glow = hoverGlow(scene, this.plate);
     }
     this.label = addText(
       scene,
@@ -342,14 +371,7 @@ export class Button extends Phaser.GameObjects.Container {
       this.plate.setAlpha(this.enabled ? 1 : 0.5);
       this.label?.setColor(this.enabled ? this.baseColor() : C.dim);
       this.setScale(this.enabled && this.hovered ? 1.04 : 1);
-      if (this.glow) {
-        this.scene.tweens.killTweensOf(this.glow);
-        this.scene.tweens.add({
-          targets: this.glow,
-          outerStrength: this.enabled && this.hovered ? FEEL.buttonGlow.strength : 0,
-          duration: FEEL.buttonGlow.fadeMs,
-        });
-      }
+      this.glow(this.enabled && this.hovered);
     } else {
       this.bg.setFillStyle(
         !this.enabled ? C.btnOff : this.hovered ? C.btnHover : C.btn,
@@ -582,6 +604,16 @@ export function addCoinsAndLives(
   return refresh;
 }
 
+/** Переключатель кнопки парирования в общей шапке; выбор сохраняется в state/localStorage. */
+export function addParryButton(scene: Phaser.Scene): Button {
+  const text = () => `Парирование: ${isParryLeftButton() ? "ЛКМ" : "ПКМ"}`;
+  const button = new Button(scene, HEADER_ART.parryX, HEADER_ART.y, HEADER_ART.parryW, 56, text(), () => {
+    setParryLeftButton(!isParryLeftButton());
+    button.setLabel(text());
+  }, 20);
+  return button;
+}
+
 /** Фон верхней полосы 80 px: балка художницы (повторяется по ширине), без картинки — тёмная полоса. */
 export function addTopBar(scene: Phaser.Scene): void {
   if (scene.textures.exists(menuArtKey("headerBar"))) {
@@ -622,6 +654,7 @@ export function addHeaderPair(
 /** Верхняя полоса: ночь, заголовок и монеты. Возвращает обновление монет. */
 export function addHeader(scene: Phaser.Scene, title: string): () => void {
   addTopBar(scene);
+  addParryButton(scene);
   if (scene.textures.exists(menuArtKey("headerBar"))) {
     const A = HEADER_ART;
     addHeaderPair(scene, A.nightX, "НОЧЬ", `${run.night}/${NIGHTS}`);

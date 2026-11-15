@@ -25,6 +25,7 @@ import {
   fit,
   goto,
   H,
+  hoverGlow,
   TITLE,
   W,
 } from "../ui";
@@ -139,13 +140,7 @@ export class MenuScene extends Phaser.Scene {
       .rectangle(0, 0, r.w, r.h, 0xffffff, 0.001)
       .setInteractive({ useHandCursor: true });
     cont.add([plate, label, hit]);
-    const G = FEEL.buttonGlow;
-    const glow = plate.postFX?.addGlow(G.color, 0, 0, false, G.quality, G.distance);
-    const lightUp = (on: boolean) => {
-      if (!glow) return;
-      this.tweens.killTweensOf(glow);
-      this.tweens.add({ targets: glow, outerStrength: on ? G.strength : 0, duration: G.fadeMs });
-    };
+    const lightUp = hoverGlow(this, plate);
     hit.on("pointerover", () => {
       sfx(this, "ui_hover");
       this.tweens.add({ targets: cont, scale: 1.04, duration: 100 });
