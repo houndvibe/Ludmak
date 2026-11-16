@@ -19,6 +19,7 @@ import {
   FINAL_BOSS,
   PARRY_REWARD_MULT,
   SHIELD_PARRY_BONUS,
+  FULL_ORDERS_NIGHT,
   HERO_HP_BY_NIGHT,
   ITEM_STATS,
   NIGHTS,
@@ -195,8 +196,8 @@ function playDay(
           r.sum += sim.heroHp / sim.heroMaxHp;
           r.n++;
         }
-        // Привал: отступить, если здоровья мало и заказчик (Упырь) не держит.
-        if (rules?.retreatBelow != null && !sim.retreatBlockedBy && sim.heroHp < rules.retreatBelow * sim.heroMaxHp) {
+        // Привал: отступить, если здоровья мало и не держит ни заказчик (Упырь), ни ночь полного дня.
+        if (rules?.retreatBelow != null && !sim.retreatForbidden && !sim.retreatBlockedBy && sim.heroHp < rules.retreatBelow * sim.heroMaxHp) {
           retreated = true;
           break;
         }
@@ -649,7 +650,9 @@ for (const p of policies) {
   const cells: string[] = [];
   let last: Stats | undefined;
   for (let n = 1; n <= NIGHTS; n++) {
-    const r = simulate(n, REF[n], queueDay(n, p.take(n), REF[n]), false, 1, p.rules);
+    // Ночь полного дня: бот обязан взять весь лимит (отступать не даст сам бой).
+    const take = n === FULL_ORDERS_NIGHT ? levelForNight(n) : p.take(n);
+    const r = simulate(n, REF[n], queueDay(n, take, REF[n]), false, 1, p.rules);
     const died = n === NIGHTS ? r.dayDeath : 100 - r.wins - r.retreats;
     if (n === NIGHTS) last = r;
     else deaths.push(died / 100);

@@ -2,7 +2,7 @@
 // Итоговая громкость звука = SFX_MASTER × громкость этого звука; музыки = MUSIC_MASTER × громкость мелодии.
 // Шкала 0..1: 1 — как в файле, 0.5 — вдвое тише, 0 — выключен. Больше 1 не ставить (файл громче не станет).
 // Кнопка «Без звука» в игре глушит всё сразу, эти числа не меняет.
-import type { MusicKey, SoundKey } from './audio';
+import type { MusicKey, SoundKey } from "./audio";
 
 /** Общая громкость всех звуков (не музыки). */
 export const SFX_MASTER = 0.8;
@@ -22,15 +22,16 @@ export const SOUND_VOLUME: Record<SoundKey, number> = {
   contract_decline: 1,
   monster_arrive: 1,
   window_close: 1,
-  door_open: 1,
+  door_open: 0.5,
 
   // Магазин
   shop_buy: 1,
   shop_sell: 1,
   shop_reroll: 1,
 
-  // Рюкзак
-  item_pickup: 1,
+  // Рюкзак и перетаскивание в магазине
+  grab: 0.3,
+  drop: 0.3,
   item_place: 1,
   item_rotate: 1,
   item_invalid: 1,

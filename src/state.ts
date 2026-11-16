@@ -18,7 +18,7 @@ import { ITEM_IDS, ITEMS, type ItemId } from './data/items';
 import type { ChainLink } from './systems/battle';
 import { findSpot, type OwnedItem } from './systems/backpack';
 import { TUTORIAL } from './data/tutorial';
-import { DEBUG_COINS, FINAL_BOSS, PARRY_REWARD_MULT } from './config/balance';
+import { DEBUG_COINS, FINAL_BOSS, FULL_ORDERS_NIGHT, PARRY_REWARD_MULT } from './config/balance';
 import { fixedContract, generateQueue, levelForNight, type Contract, type UsedQuests } from './systems/contracts';
 import { rollShopOffers } from './systems/shop';
 import { maxCharges, starOf } from './systems/synergy';
@@ -335,10 +335,18 @@ export function heroLevel(): number {
   return levelForNight(run.night);
 }
 
+/**
+ * Ночь полного дня (FULL_ORDERS_NIGHT): у двери осталось не больше монстров, чем свободных мест, — отказать нельзя.
+ */
+export function mustAcceptVisitor(): boolean {
+  return run.night === FULL_ORDERS_NIGHT && run.queue.length - run.queuePos <= heroLevel() - run.accepted.length;
+}
+
 /** Решение по монстру у окошка. Как только набран лимит заказов, очередь сразу заканчивается. */
 export function decideVisitor(accept: boolean): void {
   const c = currentVisitor();
   if (!c) return;
+  if (!accept && mustAcceptVisitor()) return;
   if (accept && run.accepted.length < heroLevel()) {
     run.accepted.push(c);
     // Кикимора платит авансом: деньги сразу, их можно потратить в магазине этой же ночью.

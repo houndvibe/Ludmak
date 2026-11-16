@@ -5,6 +5,7 @@ import * as Phaser from 'phaser';
 import { GridView } from '../components/GridView';
 import { BATTLE_LAYOUT, BG_BATTLE_KEY, enemyItemKey, enemyKey, HEADER_ART, HERO_KEY, HORSE_ART, itemKey, MENU_ART, MENU_LAYOUT, menuArtKey, statIconKey, tagKey, uiIconKey, UI_ART, type CursorBlade } from '../config/assets';
 import { BATTLE_FAST_SPEED, ENEMY_PATTERN, NIGHTS, PARRY_PERK } from '../config/balance';
+import { FULL_NIGHT_NOTE } from '../data/story';
 import { CLIENTS } from '../data/clients';
 import { ENEMIES } from '../data/enemies';
 import { FEEL } from '../config/feel';
@@ -1648,6 +1649,9 @@ export class BattleScene extends Phaser.Scene {
       case 'buff':
         this.floatWithIcon(L.floatHeroX, L.floatY + 60, `оружие ×${e.mult}`, C.accent, statIconKey('buff'));
         break;
+      case 'torchSlow':
+        this.floatWithIcon(L.floatEnemyX, L.floatY + 60, `атаки медленнее +${e.extra.toFixed(2)} с`, C.good, statIconKey('slow'), 26);
+        break;
       case 'steal':
         // Мешок не отбит: монеты уходят из кошелька сразу (пуст — из награды заказа).
         this.enemyView?.flash(e.uid);
@@ -1828,15 +1832,19 @@ export class BattleScene extends Phaser.Scene {
         this.nextEnemy();
       }, 30),
     );
-    // Упырь «Без спешки»: пока его заказ не выполнен, отступить нельзя.
+    // Ночь полного дня — отступать нельзя совсем; Упырь «Без спешки» — пока его заказ не выполнен.
+    const forbidden = sim.retreatForbidden;
     const blockedBy = sim.retreatBlockedBy;
-    const retreat = new Button(this, 160, 80, 290, 80, blockedBy ? 'Отступить нельзя' : `Отступить (−${penalty})`, () => {
+    const noRetreat = forbidden || !!blockedBy;
+    const retreat = new Button(this, 160, 80, 290, 80, noRetreat ? 'Отступить нельзя' : `Отступить (−${penalty})`, () => {
       this.closeOverlay();
       sfx(this, 'retreat');
       this.finish({ kind: 'retreat', defeated, stolen: sim.stolen, parryGoals: sim.parryGoals, heroHp: sim.heroHp }, 'Людьмак отступил');
-    }, 30, 'refuse').setEnabled(!blockedBy);
+    }, 30, 'refuse').setEnabled(!noRetreat);
     box.add(retreat);
-    if (blockedBy) {
+    if (forbidden) {
+      box.add(addPanelText(this, 0, 148, FULL_NIGHT_NOTE, 20, C.bad));
+    } else if (blockedBy) {
       const c = CLIENTS[blockedBy];
       box.add(addPanelText(this, 0, 148, `${c.name}: «${c.condition.title.toLowerCase()}» — заказ ещё не выполнен`, 20, C.bad));
     }
@@ -1996,7 +2004,7 @@ export class BattleScene extends Phaser.Scene {
     const es: string[] = [];
     if (e.stun > 0) es.push(`Оглушён: ${e.stun.toFixed(1)} с`);
     if (e.haste > 0) es.push(`Разбужен: ${e.haste.toFixed(1)} с`);
-    if (e.torchSlow > 0) es.push(`Замедлен факелом: +${e.torchSlow.toFixed(1)} с`);
+    if (sim.torchSlow.left > 0) es.push(`Атаки медленнее (+${sim.torchSlow.extra.toFixed(2)} с): ${sim.torchSlow.left.toFixed(1)} с`);
     const guard = e.slots.find((s) => s.stats.guardMult);
     if (guard) es.push(e.guardBroken > 0 ? `Щит сбит: ${e.guardBroken.toFixed(1)} с` : `За щитом: урон ×${guard.stats.guardMult}`);
     if (e.quenOn) es.push(`Квен: отбей подряд ${e.quenStreak}/${ENEMY_PATTERN.quen.parries}`);

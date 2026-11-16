@@ -750,6 +750,7 @@ export class ShopScene extends Phaser.Scene {
       h.on('dragstart', (p: Phaser.Input.Pointer) => {
         this.hint.setVisible(false);
         this.dragging = true;
+        sfx(this, 'grab');
         for (const l of this.lifts) this.setLift(l, false);
         lift.cont.setAlpha(S.dragDimAlpha);
         const b = icon.getBounds();

@@ -14,6 +14,9 @@ export const WITCHER_LETTER = {
 };
 
 /** Записка на стене дома после победы над ведьмаком: благодарность игроку. */
+/** Ночь полного дня (FULL_ORDERS_NIGHT): почему нельзя отказать у окошка и отступить на привале. */
+export const FULL_NIGHT_NOTE = 'Враг близко — выбора уже нет';
+
 export const THANKS_NOTE = {
   title: "Записка на стене",
   body:

@@ -10,6 +10,7 @@ import {
   ENEMY_PATTERN,
   ENEMY_STAT_MULT_BY_NIGHT,
   ENEMY_STATS,
+  FULL_ORDERS_NIGHT,
   GHOST_FIRST_HIT_MULT,
   HERO_HP_BY_NIGHT,
   MODIFIER_STATS,
@@ -91,8 +92,6 @@ export interface EnemyState {
   haste: number;
   /** Ещё увернётся от следующей бомбы (ведьмак — от первой). */
   dodgeBomb: boolean;
-  /** Факел героя: на столько секунд дольше перезаряжаются все его предметы (копится до конца боя с ним). */
-  torchSlow: number;
   /** Ростовой щит сбит: ещё столько секунд урон героя проходит полностью. */
   guardBroken: number;
   /** Монах: крест закончился — можно бросить святую воду; blessed — ритуал прошёл, вода освящена. */
@@ -132,8 +131,9 @@ export type BattleEvent =
   /** Мешок: украдено из кошелька (wallet) и из награды (reward); refund — убил вора, украденное вернулось. */
   | { type: 'steal'; uid: number; wallet: number; reward: number }
   | { type: 'refund'; wallet: number; reward: number }
-  /** Перки основного оружия: факел замедлил врага (итог, сек), топор набрал заряд, топор ударил двойным. */
-  | { type: 'torchSlow'; seconds: number }
+  /** Факел: парирование замедлило все кружки врага на seconds секунд — каждый летит дольше на extra секунд. */
+  | { type: 'torchSlow'; seconds: number; extra: number }
+  /** Топор набрал заряд или ударил двойным. */
   | { type: 'axeCharge'; charges: number }
   | { type: 'axeRelease'; uid: number }
   // Соседство
@@ -294,6 +294,8 @@ export class BattleSim {
   wallet: number;
   /** Герой оглушён (пропущенная бомба ведьмака): ещё столько секунд активные предметы не нажимаются. */
   heroStun = 0;
+  /** Замедление кружков от парирования факелом: ещё left секунд (реальных), каждый кружок летит дольше на extra. */
+  torchSlow = { left: 0, extra: 0 };
   private events: BattleEvent[] = [];
 
   constructor(cfg: BattleConfig) {
@@ -353,6 +355,11 @@ export class BattleSim {
    * Чей заказ не даёт отступить на привале: заказчик с «без спешки», чей заказ ещё не выполнен.
    * На привале выполнены все заказы до следующего врага. null — отступить можно.
    */
+  /** Ночь полного дня (FULL_ORDERS_NIGHT): отступать на привале нельзя совсем. */
+  get retreatForbidden(): boolean {
+    return this.night === FULL_ORDERS_NIGHT;
+  }
+
   get retreatBlockedBy(): ClientId | null {
     const next = this.chain[this.defeated];
     if (!next) return null;
@@ -531,7 +538,6 @@ export class BattleSim {
       hitOnce: false,
       haste: 0,
       dodgeBomb: !!def.dodgeFirstBomb,
-      torchSlow: 0,
       guardBroken: 0,
       ritualReady: false,
       blessed: false,
@@ -569,11 +575,15 @@ export class BattleSim {
         this.show(p);
         continue;
       }
-      p.left -= realDt;
+      // Замедление факела: кружок, целиком попавший в него, летит на extra секунд дольше.
+      const slow = this.torchSlow.left > 0 ? p.total / (p.total + this.torchSlow.extra) : 1;
+      p.left -= realDt * slow;
       if (p.left > 0) continue;
       this.strike(p, false);
       if (this.checkEnd()) return;
     }
+
+    if (this.torchSlow.left > 0) this.torchSlow.left = Math.max(0, this.torchSlow.left - realDt);
 
     if (this.weaponBuff.time > 0) {
       this.weaponBuff.time = Math.max(0, this.weaponBuff.time - dt);
@@ -615,8 +625,9 @@ export class BattleSim {
       if ((s.def.mode !== 'passive' && !s.own) || s.charges <= 0 || !s.stats.cooldown) continue;
       if (s.own && this.pending.some((p) => p.slot === s)) continue; // своё оружие ждёт, пока его удары в полёте
       s.timer += dt;
-      if (s.timer >= s.stats.cooldown! + e.torchSlow) {
-        s.timer -= s.stats.cooldown! + e.torchSlow;
+      const cooldown = s.stats.cooldown!;
+      if (s.timer >= cooldown) {
+        s.timer -= cooldown;
         this.useEnemyItem(s);
       }
     }
@@ -625,7 +636,7 @@ export class BattleSim {
     const next = busy ? null : this.nextAction();
     if (next) {
       e.actionTimer += dt * (e.haste > 0 ? MODIFIER_STATS.lightSleeperSpeed : 1);
-      if (e.actionTimer >= next.stats.cooldown! + e.torchSlow) {
+      if (e.actionTimer >= next.stats.cooldown!) {
         e.actionTimer = 0;
         this.useEnemyItem(next);
         this.checkEnd();
@@ -654,7 +665,7 @@ export class BattleSim {
     return true;
   }
 
-  /** Перк основного оружия после парирования. */
+  /** Перк основного оружия после парирования конкретного вражеского предмета. */
   private parryPerk(main: HeroSlot): void {
     const perk = main.def.parryPerk;
     if (perk === 'dagger' && main.stats.damage) {
@@ -663,10 +674,11 @@ export class BattleSim {
       const resist = this.resistMult(main.def);
       this.events.push({ type: 'heroItem', uid: main.item.uid, name: main.def.name, active: false });
       this.damageEnemy(Math.round(main.stats.damage * PARRY_PERK.daggerMult * mult * resist), mult > 1, resist < 1, main.def.id, main.item.uid);
-    } else if (perk === 'torch') {
-      const e = this.enemy;
-      e.torchSlow = Math.min(PARRY_PERK.torchSlowMax, Math.round((e.torchSlow + PARRY_PERK.torchSlow) * 10) / 10);
-      this.events.push({ type: 'torchSlow', seconds: e.torchSlow });
+    } else if (perk === 'torch' && this.torchSlow.left <= 0) {
+      // Не складывается: пока замедление идёт, новое парирование ничего не даёт.
+      const torches = this.slots.filter((s) => s.def.parryPerk === 'torch' && !s.disabled).length;
+      this.torchSlow = { left: PARRY_PERK.torchSlowSeconds, extra: torches * PARRY_PERK.torchSlowPerTorch };
+      this.events.push({ type: 'torchSlow', seconds: PARRY_PERK.torchSlowSeconds, extra: this.torchSlow.extra });
     } else if (perk === 'axe') {
       this.axeCharges = Math.min(PARRY_PERK.axeCharges, this.axeCharges + 1);
       this.events.push({ type: 'axeCharge', charges: this.axeCharges });

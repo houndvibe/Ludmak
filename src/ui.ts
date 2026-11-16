@@ -13,6 +13,7 @@ import {
   PARRY_REWARD_SHARE,
   SHIELD_SLOW_BY_STAR,
   type ItemStats,
+  DEBUG_COINS_SHOWN,
 } from "./config/balance";
 import {
   BG_HORSE_KEY,
@@ -597,7 +598,9 @@ export function addCoinsAndLives(
   const coinPx = bar ? HEADER_ART.coinIcon : COIN_PX;
   icon?.setScale(coinPx / icon.height);
   const refresh = () => {
-    coins.setText(art ? `${run.coins}` : `Монеты: ${run.coins}`).setX(x);
+    // Дебаг: монеты фактически бесконечные, а счётчик всегда показывает DEBUG_COINS_SHOWN.
+    const shown = run.debug ? DEBUG_COINS_SHOWN : run.coins;
+    coins.setText(art ? `${shown}` : `Монеты: ${shown}`).setX(x);
     icon?.setX(coins.x - coins.width - 8 - coinPx / 2);
   };
   refresh();
@@ -687,7 +690,7 @@ const PARRY_PERK_TEXT: Record<ParryPerkId, string> = {
   sword: "парированный удар вдвое слабее",
   shield: `отбивает всей областью, парированный удар слабее на ${Math.round((1 - PARRY_PERK.shieldMult) * 100)}%`,
   dagger: "за парирование бьёт врага половиной своего урона",
-  torch: `за парирование предметы врага перезаряжаются на ${PARRY_PERK.torchSlow} с дольше`,
+  torch: `парирование на ${PARRY_PERK.torchSlowSeconds} с замедляет все атаки врага: +${PARRY_PERK.torchSlowPerTorch} с за каждый факел в рюкзаке, не складывается`,
   axe: `${PARRY_PERK.axeCharges} парирований подряд — следующий удар топора ×${PARRY_PERK.axeMult}`,
   sickle: `за парирование лечит на ${PARRY_PERK.sickleHeal}`,
 };
@@ -898,8 +901,8 @@ export function itemStatChips(
       out.push({
         icon: "parry",
         icon2: "slow",
-        value: `враг +${PARRY_PERK.torchSlow} с`,
-        hint: `${main} Каждое парирование: все предметы врага перезаряжаются на ${PARRY_PERK.torchSlow} с дольше, до конца боя с ним (не больше +${PARRY_PERK.torchSlowMax} с).`,
+        value: `+${PARRY_PERK.torchSlowPerTorch} с × факел`,
+        hint: `${main} Парирование на ${PARRY_PERK.torchSlowSeconds} с замедляет все атаки врага: каждая летит дольше на ${PARRY_PERK.torchSlowPerTorch} с за каждый факел в рюкзаке. Не складывается: пока замедление идёт, новое парирование его не продлевает.`,
       });
     } else if (d.parryPerk === "axe") {
       out.push({

@@ -18,8 +18,9 @@ export const SOUND_KEYS = [
   "shop_buy",
   "shop_sell",
   "shop_reroll",
-  // Рюкзак
-  "item_pickup",
+  // Рюкзак и перетаскивание в магазине
+  "grab",
+  "drop",
   "item_place",
   "item_rotate",
   "item_invalid",
@@ -70,6 +71,8 @@ export const AVAILABLE_AUDIO_KEYS: readonly string[] = [
   "contract_accept",
   "contract_decline",
   "door_open",
+  "drop",
+  "grab",
   "hit_enemy",
   "monk_cross",
   "monster_arrive",

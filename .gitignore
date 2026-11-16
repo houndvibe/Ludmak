@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.zip
 .sim/
+.DS_Store
+vite-dev.log
+vite-dev-error.log

@@ -20,7 +20,7 @@ import {
 } from "../config/assets";
 import { CLIENTS } from "../data/clients";
 import { ENEMIES } from "../data/enemies";
-import { THANKS_NOTE, WITCHER_LETTER } from "../data/story";
+import { FULL_NIGHT_NOTE, THANKS_NOTE, WITCHER_LETTER } from "../data/story";
 import {
   currentVisitor,
   decideVisitor,
@@ -28,6 +28,7 @@ import {
   heroLevel,
   mainItem,
   markLetterRead,
+  mustAcceptVisitor,
   queueDone,
   resolveNight,
   run,
@@ -898,6 +899,8 @@ export class HomeScene extends Phaser.Scene {
         30,
       ),
     );
+    // Ночь полного дня: у двери осталось столько монстров, сколько свободных мест, — отказать нельзя.
+    const forced = mustAcceptVisitor();
     add(
       new Button(
         this,
@@ -907,14 +910,15 @@ export class HomeScene extends Phaser.Scene {
         70,
         "Отказать",
         () => {
-          if (this.stamping) return;
+          if (this.stamping || forced) return;
           sfx(this, "contract_decline");
           this.visitorLeaves(() => decideVisitor(false));
         },
         30,
         "refuse",
-      ),
+      ).setEnabled(!forced),
     );
+    if (forced) add(addText(this, r.x + r.w / 2, by + 60, FULL_NIGHT_NOTE, 22, C.bad, TITLE).setOrigin(0.5, 0));
   }
 
   /** Уходим на охоту (идёт наезд на дверь) — повторное нажатие не срабатывает. */

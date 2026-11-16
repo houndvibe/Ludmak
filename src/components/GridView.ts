@@ -649,7 +649,7 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
     this.bringToTop(this.preview!);
     this.bringToTop(p.cont);
     this.layoutDragged(ptr.x - this.x, ptr.y - this.y);
-    sfx(this.scene, 'item_pickup');
+    sfx(this.scene, 'grab');
   }
 
   private layoutDragged(lx: number, ly: number): void {
@@ -818,14 +818,14 @@ export class GridView<T extends Placement> extends Phaser.GameObjects.Container 
       const { col, row } = this.targetCell(it);
       if (this.canPlaceHere(it, col, row)) {
         Object.assign(it, { inGrid: true, col, row });
-        sfx(this.scene, 'item_place');
+        sfx(this.scene, 'drop');
       } else {
         Object.assign(it, { ...saved, uid: it.uid }); // не влезает — возвращаем, откуда взяли
         sfx(this.scene, 'item_invalid');
       }
     } else {
       it.inGrid = false;
-      sfx(this.scene, 'item_place');
+      sfx(this.scene, 'drop');
     }
     this.layout();
     // Выложенный «вне сумок» предмет может оказаться на другой странице — показываем её.
