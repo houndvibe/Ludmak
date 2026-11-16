@@ -115,6 +115,24 @@ export function restoreMute(game: Phaser.Game): void {
   game.sound.volume = playerVolume;
 }
 
+/**
+ * Phaser считает звук заблокированным, если аудио при старте «спит», и будит его только по клику или клавише внутри игры —
+ * поэтому музыка меню начиналась лишь после первого действия. Но браузер часто уже разрешает звук (на itch.io — после
+ * клика «Run game»): пробуем разбудить сразу. Не разрешил — обещание ждёт первого действия игрока, как и раньше.
+ */
+export function tryUnlockAudio(game: Phaser.Game): void {
+  const manager = game.sound as Phaser.Sound.WebAudioSoundManager;
+  const ctx = manager.context as AudioContext | undefined;
+  if (!manager.locked || !ctx) return;
+  ctx
+    .resume()
+    .then(() => {
+      // Phaser на следующем кадре снимет блокировку и пошлёт UNLOCKED — на него и ждёт playMusic.
+      if (manager.locked) (manager as unknown as { unlocked: boolean }).unlocked = true;
+    })
+    .catch(() => {});
+}
+
 /** Громкость с ползунка (0..1): общий множитель поверх src/config/volume.ts, для звуков и музыки сразу. */
 export function getVolume(): number {
   return playerVolume;

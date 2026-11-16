@@ -94,9 +94,9 @@ export const BG_HOME_KEY = "bg_home";
  * задвижка окошка: кусок по HOME_LAYOUT.window. Необязательный: нет файла — задвижка рисуется кодом.
  */
 export const BG_HOME_CLOSED_KEY = "bg_home_closed";
-export const BG_HOME_CLOSED_PATH = "portraits/clients/bg_house_door_window.png";
+export const BG_HOME_CLOSED_PATH = "portraits/clients/bg_house_door_window.webp";
 export const HOME_FRAME_KEY = "home_window_frame";
-export const HOME_FRAME_PATH = "portraits/clients/bg_house_door_frame.png";
+export const HOME_FRAME_PATH = "portraits/clients/bg_house_door_frame.webp";
 /** Маска проёма окошка в двери (HOME_LAYOUT.windowMask). */
 export const HOME_WINDOW_MASK_KEY = "ui_home_window_mask";
 
@@ -127,13 +127,13 @@ export interface CursorBlade {
 
 export const UI_ART = {
   button: {
-    normal: { path: "ui/button.png", crop: { x: 11, y: 82, w: 1063, h: 197 } },
-    hover: { path: "ui/button_hover.png", crop: { x: 16, y: 72, w: 1056, h: 217 } },
-    disabled: { path: "ui/button_disabled.png", crop: { x: 13, y: 72, w: 1058, h: 218 } },
+    normal: { path: "ui/button.webp", crop: { x: 11, y: 82, w: 1063, h: 197 } },
+    hover: { path: "ui/button_hover.webp", crop: { x: 16, y: 72, w: 1056, h: 217 } },
+    disabled: { path: "ui/button_disabled.webp", crop: { x: 13, y: 72, w: 1058, h: 218 } },
   } as Record<ButtonState, { path: string; crop: { x: number; y: number; w: number; h: number } }>,
   buttonHeight: 128,
   slice: { x: 0.38, y: 0.32 },
-  header: { path: "ui/header.png", band: { y: 571, h: 128 } },
+  header: { path: "ui/header.webp", band: { y: 571, h: 128 } },
   /**
    * Курсор основного оружия в зоне атак (бой) — картинка предмета героя. Доли ширины и высоты картинки:
    * tip — кончик (в покое ровно на курсоре), grip — рукоять (вокруг неё взмах), bladeEnd — до куда отбивает: отрезок
@@ -154,13 +154,13 @@ export const UI_ART = {
   cursorShield: { hitShare: 0.9 },
   /** Значки: сердце (жизнь есть / потеряна) и монета. crop — без прозрачных полей; Boot уменьшает до iconHeight px. */
   icons: {
-    heart_full: { path: "ui/heart_full.png", crop: { x: 25, y: 40, w: 259, h: 246 } },
-    heart_broken: { path: "ui/heart_broken.png", crop: { x: 16, y: 24, w: 279, h: 265 } },
-    coin: { path: "ui/coin.png", crop: { x: 0, y: 0, w: 60, h: 64 } },
+    heart_full: { path: "ui/heart_full.webp", crop: { x: 25, y: 40, w: 259, h: 246 } },
+    heart_broken: { path: "ui/heart_broken.webp", crop: { x: 16, y: 24, w: 279, h: 265 } },
+    coin: { path: "ui/coin.webp", crop: { x: 0, y: 0, w: 60, h: 64 } },
   } as Record<UiIconId, { path: string; crop: { x: number; y: number; w: number; h: number } }>,
   iconHeight: 96,
   /** Пергамент карточки заказа (дом); Boot уменьшает его ровно до HOME_LAYOUT.card. pad — поля текста от края (px карточки). */
-  parchment: { path: "ui/contract_parchment.png", crop: { x: 0, y: 0, w: 592, h: 741 }, pad: { x: 40, top: 40, bottom: 34 } },
+  parchment: { path: "ui/contract_parchment.webp", crop: { x: 0, y: 0, w: 592, h: 741 }, pad: { x: 40, top: 40, bottom: 34 } },
   /**
    * Карточка товара в магазине: plain — обычный предмет, rare — редкий и особый (вместо синей рамки). Boot уменьшает
    * картинку целиком до w×h. Раскладка внутри (px карточки) — под нарисованное: pad — поле значка типа и формы от угла,
@@ -184,7 +184,7 @@ export const uiShopCardKey = (s: ShopCardStyle) => `ui_shop_card_${s}`;
 export type UiIconId = "heart_full" | "heart_broken" | "coin";
 export const uiIconKey = (id: UiIconId) => `ui_icon_${id}`;
 export const UI_PARCHMENT_KEY = "ui_parchment";
-/** Отдельный пергамент итогов ночи: ui/results_parchment.png. */
+/** Отдельный пергамент итогов ночи: ui/results_parchment.webp. */
 export const RESULTS_PARCHMENT_KEY = "results_parchment";
 /** Исходные картинки оформления (как загружены) и готовые для игры (обрезанные и уменьшенные в Boot). */
 export const uiSourceKey = (name: string) => `ui_src_${name}`;
@@ -299,10 +299,10 @@ export const HOME_LAYOUT = {
   window: { x: 867, y: 295, w: 214, h: 238, radius: 26 },
   /**
    * Маска проёма окошка по картинке фона (белое — видно): x, y — левый верхний угол маски в пикселях картинки фона.
-   * null — скруглённый прямоугольник window. Для фона home_v2.webp есть готовая: { path: "ui/home_window_mask.png", x: 906, y: 300 }.
+   * null — скруглённый прямоугольник window. Для фона home_v2.webp есть готовая: { path: "ui/home_window_mask.webp", x: 906, y: 300 }.
    */
   windowMask: null as { path: string; x: number; y: number } | null,
-  /** Есть рамка окошка (bg_house_door_frame.png): портрет обрезается по рамке, отступив внутрь на столько px. */
+  /** Есть рамка окошка (bg_house_door_frame.webp): портрет обрезается по рамке, отступив внутрь на столько px. */
   windowInset: 8,
   /** Сдвиг портрета внутри окошка по вертикали (px): больше — портрет ниже, видно больше макушки. */
   portraitOffsetY: 0,
@@ -311,7 +311,7 @@ export const HOME_LAYOUT = {
   /** Карточка заказа рядом с окошком. */
   card: { x: 1195, y: 240, w: 455, h: 560 },
   /**
-   * Печать «Принято» на карточке заказа (ui/seal_stamp.png): центр — доля ширины и высоты карточки (правый нижний угол,
+   * Печать «Принято» на карточке заказа (ui/seal_stamp.webp): центр — доля ширины и высоты карточки (правый нижний угол,
    * поверх «Награда / Неустойка»), размер — доля ширины карточки. imprint — оттиск: центр картинки оттиска в долях картинки воска
    * и ширина — доля ширины воска; подобрано по пикселям: внешнее кольцо оттиска (радиус ~126 px его картинки) ложится
    * на середину светлого кольца капли (центр 235, 255; радиусы 105–133 px картинки воска).
@@ -333,7 +333,7 @@ export const HOME_LAYOUT = {
   labels: {
     shop: { x: 364, y: 929 },
     bags: { x: 1780, y: 842 },
-    /** По центру полотна двери (вырезка ui/home_door.png), у нижнего края. */
+    /** По центру полотна двери (вырезка ui/home_door.webp), у нижнего края. */
     door: { x: 954, y: 945 },
   } as Partial<Record<"shop" | "bags" | "door", { x: number; y: number }>>,
   labelSize: 43,
@@ -343,10 +343,10 @@ export const HOME_LAYOUT = {
    * x, y — левый верхний угол вырезки в пикселях картинки фона дома (2560×1440). Нет записи или файла — прямоугольная рамка.
    */
   cutouts: {
-    shop: { path: "ui/home_chest.png", x: 147, y: 869 },
-    bags: { path: "ui/home_bags.png", x: 2240, y: 431 },
+    shop: { path: "ui/home_chest.webp", x: 147, y: 869 },
+    bags: { path: "ui/home_bags.webp", x: 2240, y: 431 },
     /** Полотно двери с петлями и засовом (вырезка художницы); depth 3 — под окошком и портретом. */
-    door: { path: "ui/home_door.png", x: 1030, y: 263, depth: 3 },
+    door: { path: "ui/home_door.webp", x: 1030, y: 263, depth: 3 },
   } as Partial<
     Record<"shop" | "bags" | "door", { path: string; x: number; y: number; depth?: number }>
   >,
@@ -435,36 +435,36 @@ export const MENU_LAYOUT = {
  * (дорожка вписывается в длину ползунка). textColor — цвет надписей меню. Нет картинки — обычная кнопка и ползунок, логотип — текстом.
  */
 export const MENU_ART = {
-  button: { path: "ui/menu/button.png", slice: 54 },
-  /** Логотип без осколков (их вырезали из ui/menu/logo.png — осколки летают отдельно, shards). */
-  logo: { path: "ui/menu/logo_clean.png" },
-  sliderTrack: { path: "ui/menu/slider_track.png" },
-  sliderFill: { path: "ui/menu/slider_fill.png" },
-  sliderEnds: { path: "ui/menu/slider_ends.png" },
+  button: { path: "ui/menu/button.webp", slice: 54 },
+  /** Логотип без осколков (их вырезали из ui/menu/logo.webp — осколки летают отдельно, shards). */
+  logo: { path: "ui/menu/logo_clean.webp" },
+  sliderTrack: { path: "ui/menu/slider_track.webp" },
+  sliderFill: { path: "ui/menu/slider_fill.webp" },
+  sliderEnds: { path: "ui/menu/slider_ends.webp" },
   /** Окно «Быстрый бой» (макет художницы): фон окна (растягивается на MENU_LAYOUT.quickPanel), рамка портрета
    * (середина прозрачная, портрет под ней), ромбы слева и справа от заголовка. */
-  quickPanel: { path: "ui/quick_panel.png" },
-  portraitFrame: { path: "ui/portrait_frame.png" },
-  diamondLeft: { path: "ui/diamond_left.png" },
-  diamondRight: { path: "ui/diamond_right.png" },
-  /** Шапка экранов (макет художницы): доска на всю ширину экрана, без текста. Нет картинки — старая балка ui/header.png. */
-  headerBar: { path: "ui/header_bar.png" },
+  quickPanel: { path: "ui/quick_panel.webp" },
+  portraitFrame: { path: "ui/portrait_frame.webp" },
+  diamondLeft: { path: "ui/diamond_left.webp" },
+  diamondRight: { path: "ui/diamond_right.webp" },
+  /** Шапка экранов (макет художницы): доска на всю ширину экрана, без текста. Нет картинки — старая балка ui/header.webp. */
+  headerBar: { path: "ui/header_bar.webp" },
   /** Траурная лента на портрет (экран поражения); нет файла — лента рисуется кодом. */
-  mourningRibbon: { path: "ui/mourning_ribbon.png" },
+  mourningRibbon: { path: "ui/mourning_ribbon.webp" },
   /**
    * Глаза в лесу (вырезаны из варианта фона художницы): картинка и центр в пикселях исходного фона (2000×1125) —
    * в игре масштабируются вместе с фоном. Моргают и иногда пропадают (FEEL.menuLife.eyes).
    */
   eyes: [
-    { path: "ui/menu/eyes_0.png", x: 82, y: 384 },
-    { path: "ui/menu/eyes_1.png", x: 692, y: 227 },
-    { path: "ui/menu/eyes_2.png", x: 1552, y: 468 },
-    { path: "ui/menu/eyes_3.png", x: 1918, y: 240 },
+    { path: "ui/menu/eyes_0.webp", x: 82, y: 384 },
+    { path: "ui/menu/eyes_1.webp", x: 692, y: 227 },
+    { path: "ui/menu/eyes_2.webp", x: 1552, y: 468 },
+    { path: "ui/menu/eyes_3.webp", x: 1918, y: 240 },
   ],
   /** Печать на логотипе (доля ширины и высоты картинки логотипа) — за ней светит свечение. */
   seal: { x: 0.497, y: 0.62 },
   /**
-   * Осколки печати (ui/menu/seal_shards.png художницы, разрезан на shard_N.png): центр каждого в пикселях картинки
+   * Осколки печати (ui/menu/seal_shards.webp художницы, разрезан на shard_N.webp): центр каждого в пикселях картинки
    * логотипа (1289×689) — там, где он нарисован; в меню парят вокруг этого места (FEEL.menuLife.shards).
    */
   shards: [
@@ -503,9 +503,9 @@ export const menuShardKey = (n: number) => `ui_menu_shard_${n}`;
 
 /** Печать «Принято» на заказе (дом): сначала капля воска, потом на неё оттиск с «Ъ» (картинки художницы). */
 export const SEAL_STAMP_KEY = "ui_seal_wax";
-export const SEAL_STAMP_PATH = "ui/seal_wax.png";
+export const SEAL_STAMP_PATH = "ui/seal_wax.webp";
 export const SEAL_IMPRINT_KEY = "ui_seal_imprint";
-export const SEAL_IMPRINT_PATH = "ui/seal_imprint.png";
+export const SEAL_IMPRINT_PATH = "ui/seal_imprint.webp";
 
 /** Фон меню: логотип «Людьмак» на тёмной доске. */
 /**
@@ -644,7 +644,7 @@ export const BACKPACK_LAYOUT = {
    * Прямоугольник — чистая область пергамента на фоне.
    */
   power: { x: 1211, y: 140, w: 622, h: 400 },
-  /** Панель (ui/quick_panel.png) под «Силой снаряжения» — поверх нарисованного на фоне пергамента. */
+  /** Панель (ui/quick_panel.webp) под «Силой снаряжения» — поверх нарисованного на фоне пергамента. */
   panel: { x: 1172, y: 100, w: 700, h: 462 },
   /** Подсказка управления — справа от кнопки «Вернуться», под сеткой сумок. */
   hint: { x: 400, y: 950 },
@@ -674,10 +674,10 @@ export const SHOP_LAYOUT = {
   /** Кнопка «Обновить ассортимент» (в дебаге — листание товаров): центр и размер. */
   reroll: { x: 304, y: 1016, w: 520, h: 70 },
   /**
-   * Торговец, вырезанный из фона отдельным слоем (ui/shop_merchant.png) — «дышит» поверх фона (FEEL.shop.merchant).
+   * Торговец, вырезанный из фона отдельным слоем (ui/shop_merchant.webp) — «дышит» поверх фона (FEEL.shop.merchant).
    * x, y — левый верхний угол вырезки в пикселях фона 2560×1440 (на экране ×0,75). Нет файла — торговец просто на фоне.
    */
-  merchantArt: { path: "ui/shop_merchant.png", x: 1071, y: 726 },
+  merchantArt: { path: "ui/shop_merchant.webp", x: 1071, y: 726 },
   /** Торговец — только на рисунке (заглушка рисует силуэт). */
   merchant: { x: 806, y: 540, w: 312, h: 540 },
   /** Мешок с твоими вещами: сюда отпускают товар, чтобы купить. */
@@ -750,51 +750,51 @@ export const BATTLE_LAYOUT = {
 export const ASSET_MANIFEST: AssetEntry[] = [
   {
     key: HERO_KEY,
-    path: "portraits/hero/ludmak.png",
+    path: "portraits/hero/ludmak.webp",
     stub: { kind: "portrait", label: "Людьмак" },
   },
   ...ENEMY_IDS.map((id) => ({
     key: enemyKey(id),
-    path: `portraits/enemies/${id}.png`,
+    path: `portraits/enemies/${id}.webp`,
     stub: { kind: "portrait", label: ENEMIES[id].name } as StubSpec,
   })),
   ...CLIENT_IDS.map((id) => ({
     key: clientKey(id),
-    path: `portraits/clients/${id}.png`,
+    path: `portraits/clients/${id}.webp`,
     stub: { kind: "portrait", label: CLIENTS[id].name } as StubSpec,
   })),
   {
     key: CLIENT_BG_KEY,
-    path: "portraits/clients/client_bg.png",
+    path: "portraits/clients/client_bg.webp",
     stub: { kind: "background", label: "Фон заказчика", w: PORTRAIT_W, h: PORTRAIT_H, color: "#201a24" },
   },
   ...ITEM_IDS.map((id) => ({
     key: itemKey(id),
-    path: `items/${id}.png`,
+    path: `items/${id}.webp`,
     stub: { kind: "item", itemId: id } as StubSpec,
   })),
   // Предмет героя в руках врага (art) — та же картинка, что у героя.
   ...ENEMY_ITEM_IDS.map((id) => ({
     key: enemyItemKey(id),
-    path: ENEMY_ITEMS[id].art ? `items/${ENEMY_ITEMS[id].art}.png` : `items/enemy/${id}.png`,
+    path: ENEMY_ITEMS[id].art ? `items/${ENEMY_ITEMS[id].art}.webp` : `items/enemy/${id}.webp`,
     stub: { kind: "enemyItem", itemId: id } as StubSpec,
   })),
   ...TAG_IDS.map((id) => ({
     key: tagKey(id),
-    path: `tags/${id}.png`,
+    path: `tags/${id}.webp`,
     stub: { kind: "tag", tagId: id } as StubSpec,
   })),
   ...STAT_ICON_IDS.map((id) => ({
     key: statIconKey(id),
-    path: `icons/stats/${id}.png`,
+    path: `icons/stats/${id}.webp`,
     stub: { kind: "statIcon", iconId: id } as StubSpec,
   })),
   ...CATEGORY_IDS.map((id) => ({
     key: categoryKey(id),
-    path: `icons/categories/${id}.png`,
+    path: `icons/categories/${id}.webp`,
     stub: { kind: "category", category: id } as StubSpec,
   })),
-  { key: ICON_LINK_KEY, path: "icons/link.png", stub: { kind: "link" } },
+  { key: ICON_LINK_KEY, path: "icons/link.webp", stub: { kind: "link" } },
   { key: BG_HOME_KEY, path: "backgrounds/home_sketch_3.jpg", stub: { kind: "home" } },
   {
     key: BG_RESULTS_KEY,
@@ -803,7 +803,7 @@ export const ASSET_MANIFEST: AssetEntry[] = [
   },
   {
     key: BG_NIGHT_KEY,
-    path: "backgrounds/bg_night.png",
+    path: "backgrounds/bg_night.webp",
     stub: {
       kind: "background",
       label: "bg_night",
@@ -814,7 +814,7 @@ export const ASSET_MANIFEST: AssetEntry[] = [
   },
   {
     key: BG_BATTLE_KEY,
-    path: "backgrounds/bg_battle.png",
+    path: "backgrounds/bg_battle.webp",
     stub: {
       kind: "background",
       label: "bg_battle",

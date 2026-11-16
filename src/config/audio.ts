@@ -62,9 +62,36 @@ export type SoundKey = (typeof SOUND_KEYS)[number];
 export const MUSIC_KEYS = ["music_night", "music_day"] as const;
 export type MusicKey = (typeof MUSIC_KEYS)[number];
 
+/** Файлы, реально присутствующие в public/assets/audio. Отсутствующие звуки не запрашиваются у сервера. */
+export const AVAILABLE_AUDIO_KEYS: readonly string[] = [
+  "aristocrat_shot",
+  "arstocrat_aim",
+  "big_theft",
+  "contract_accept",
+  "contract_decline",
+  "door_open",
+  "hit_enemy",
+  "monk_cross",
+  "monster_arrive",
+  "music_day",
+  "music_night",
+  "parry",
+  "rapier_hit",
+  "shield_brake",
+  "shop_buy",
+  "shop_reroll",
+  "shop_sell",
+  "small_theft",
+  "sword_hit",
+  "sword_spin",
+  "ui_click",
+  "ui_hover",
+  "window_close",
+];
+
 /** Папка звуков относительно public/assets/ и форматы по порядку попыток. */
 export const AUDIO_DIR = "audio/";
-export const AUDIO_FORMATS = ["ogg", "mp3"] as const;
+export const AUDIO_FORMATS = ["mp3"] as const;
 
 // Громкость — в src/config/volume.ts (общая и для каждого звука отдельно).
 /** Небольшая случайная высота повторяющихся звуков: rate в указанном диапазоне (1 — исходный). */

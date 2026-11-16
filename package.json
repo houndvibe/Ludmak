@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/clean-dist.mjs",
     "preview": "vite preview",
     "typecheck": "tsc",
     "sim": "vite build --ssr src/sim/simulate.ts --outDir .sim --emptyOutDir --logLevel warn && node .sim/simulate.js"

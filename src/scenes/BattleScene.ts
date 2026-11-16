@@ -1093,7 +1093,10 @@ export class BattleScene extends Phaser.Scene {
     const P = FEEL.parry;
     const { x, y } = icon.cont;
     if (icon.path) this.thrustPaths.set(id, icon.path); // щит стражника появится на этой траектории
-    if (!parried && icon.item === 'cow_pie') this.stain(x, y);
+    if (!parried && icon.item === 'cow_pie') {
+      this.stain(x, y);
+      this.stain(L.heroPortrait.x, L.heroPortrait.y, false);
+    }
     if (!parried && (icon.kind === 'escape' || icon.kind === 'guard')) {
       // Бегство и щит просто гаснут; пропущенный мешок, как удар, долетает до героя.
       this.tweens.add({
@@ -1135,11 +1138,12 @@ export class BattleScene extends Phaser.Scene {
     });
     sfx(this, icon.kind === 'sack' ? 'small_theft' : 'parry');
     this.sparks(x, y);
-    this.floatWithIcon(x, y - P.size * 0.6, PARRY_TEXT[icon.kind] ?? 'Парировано!', C.accent, statIconKey('parry'), P.textSize);
+    const parryText = PARRY_TEXT[icon.kind];
+    if (parryText) this.floatWithIcon(x, y - P.size * 0.6, parryText, C.accent, statIconKey('parry'), icon.kind === 'guard' ? P.guardTextSize : P.textSize);
   }
 
-  /** Пропущенная лепёшка: бурая клякса на месте кружка поверх поля — закрывает обзор, клики проходят сквозь. */
-  private stain(x: number, y: number): void {
+  /** Пропущенная лепёшка: клякса на поле и на портрете героя. Большая надпись показывается один раз. */
+  private stain(x: number, y: number, showBanner = true): void {
     const S = FEEL.stain;
     const R = (FEEL.parry.size / 2) * S.size;
     const g = this.add.graphics().setDepth(62).setPosition(x, y);
@@ -1152,6 +1156,7 @@ export class BattleScene extends Phaser.Scene {
     g.setScale(0.4);
     this.tweens.add({ targets: g, scale: 1, duration: 120, ease: 'Back.easeOut' });
     this.tweens.add({ targets: g, alpha: 0, delay: S.holdMs, duration: S.fadeMs, onComplete: () => g.destroy() });
+    if (showBanner) this.banner('ВЫ В ГОВНЕ!', C.bad, 0, S.bannerSize);
   }
 
   /** Купол Квена над портретом ведьмака: золотой пульсирующий круг, пока поднят. */
@@ -1416,8 +1421,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /** Короткий баннер посередине: всплывает и тает, игру не останавливает. */
-  private banner(text: string, color: string, delay: number): void {
-    const t = addText(this, L.centerX, L.bannerY, text, FEEL.banner.size, color, { ...TITLE, stroke: '#000', strokeThickness: 8 })
+  private banner(text: string, color: string, delay: number, size = FEEL.banner.size): void {
+    const t = addText(this, L.centerX, L.bannerY, text, size, color, { ...TITLE, stroke: '#000', strokeThickness: 8 })
       .setOrigin(0.5)
       .setShadow(0, 4, '#000000', 0, true, true)
       .setDepth(75)
@@ -1795,16 +1800,28 @@ export class BattleScene extends Phaser.Scene {
   private showPause(): void {
     const sim = this.sim;
     const defeated = sim.defeated;
-    const total = sim.chain.length;
     const penalty = retreatPenalty(defeated, sim.stolen);
     const next = sim.chain[defeated];
+    const enemyCounts = new Map<string, number>();
+    for (const link of sim.chain.filter((link) => link.contract === next.contract)) {
+      const name = enemyName(link.enemy, link.mod);
+      enemyCounts.set(name, (enemyCounts.get(name) ?? 0) + 1);
+    }
+    const nextEnemies = [...enemyCounts]
+      .map(([name, count]) => count > 1 ? `${name} x${count}` : name)
+      .join('\n');
     sfx(this, 'rest');
-    const box = this.add.container(L.centerX, 640).setDepth(80);
+    const box = this.add.container(W / 2, 540).setDepth(80);
     // Окно — как «Быстрый бой»: плашка художницы, заголовок капителью с ромбами, текст с обводкой.
     box.add(addPanel(this, 0, 0, 720, 400));
     box.add(addPanelTitle(this, 0, -138, 'Привал'));
-    box.add(addPanelText(this, 0, -80, `Заказ выполнен (${defeated} из ${total})`, 30, C.good, true));
-    box.add(addPanelText(this, 0, -36, `Дальше — заказ: ${CLIENTS[run.accepted[next.contract].client].name}.`, 24, MENU_ART.buttonTextColor));
+    const nextTitle = addPanelText(this, 0, -80, 'Следующий заказ:', 30, C.good, true);
+    const enemyList = addPanelText(this, 0, 0, nextEnemies, 24, MENU_ART.buttonTextColor);
+    // Равные поля между заголовком → списком → кнопками при любом числе строк (кнопки начинаются с y = 40).
+    const titleBottom = nextTitle.y + nextTitle.height / 2;
+    const gap = (40 - titleBottom - enemyList.height) / 2;
+    enemyList.setY(titleBottom + gap + enemyList.height / 2);
+    box.add([nextTitle, enemyList]);
     box.add(
       new Button(this, -160, 80, 290, 80, 'Дальше', () => {
         this.closeOverlay();

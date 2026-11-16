@@ -1,7 +1,7 @@
 // Загружает все картинки из манифеста (для отсутствующих рисует заглушки под теми же ключами) и звуки (src/config/audio.ts).
 import * as Phaser from 'phaser';
-import { AUDIO_DIR, AUDIO_FORMATS, MUSIC_KEYS, SOUND_KEYS } from '../config/audio';
-import { restoreMute } from '../components/Sound';
+import { AUDIO_DIR, AUDIO_FORMATS, AVAILABLE_AUDIO_KEYS, MUSIC_KEYS, SOUND_KEYS } from '../config/audio';
+import { restoreMute, tryUnlockAudio } from '../components/Sound';
 import {
   ASSET_MANIFEST,
   HOME_LAYOUT,
@@ -48,7 +48,7 @@ import { addText, FONT, H, W } from '../ui';
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
 
-const AUDIO_KEYS: string[] = [...SOUND_KEYS, ...MUSIC_KEYS];
+const AUDIO_KEYS: string[] = [...SOUND_KEYS, ...MUSIC_KEYS].filter((key) => AVAILABLE_AUDIO_KEYS.includes(key));
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -68,10 +68,10 @@ export class BootScene extends Phaser.Scene {
     this.load.image(uiSourceKey('header'), UI_ART.header.path);
     for (const [id, ic] of Object.entries(UI_ART.icons)) this.load.image(uiSourceKey(id), ic.path);
     this.load.image(uiSourceKey('parchment'), UI_ART.parchment.path);
-    this.load.image(RESULTS_PARCHMENT_KEY, 'ui/results_parchment.png');
+    this.load.image(RESULTS_PARCHMENT_KEY, 'ui/results_parchment.webp');
     for (const id of ['button', 'logo', 'sliderTrack', 'sliderFill', 'sliderEnds', 'quickPanel', 'portraitFrame', 'diamondLeft', 'diamondRight', 'headerBar', 'mourningRibbon'] as const) this.load.image(menuArtKey(id), MENU_ART[id].path);
     MENU_ART.eyes.forEach((e, n) => this.load.image(menuEyesKey(n), e.path));
-    MENU_ART.shards.forEach((_, n) => this.load.image(menuShardKey(n), `ui/menu/shard_${n}.png`));
+    MENU_ART.shards.forEach((_, n) => this.load.image(menuShardKey(n), `ui/menu/shard_${n}.webp`));
     this.load.image(SEAL_STAMP_KEY, SEAL_STAMP_PATH);
     this.load.image(SEAL_IMPRINT_KEY, SEAL_IMPRINT_PATH);
     for (const s of ['plain', 'rare'] as const) this.load.image(uiSourceKey(`shop_card_${s}`), UI_ART.shopCard[s].path);
@@ -93,6 +93,7 @@ export class BootScene extends Phaser.Scene {
     this.prepareUiArt();
     checkEnemyBags();
     restoreMute(this.game);
+    tryUnlockAudio(this.game);
     this.loadAudioFallback(1, () => this.scene.start('Menu'));
   }
 

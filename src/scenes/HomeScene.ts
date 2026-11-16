@@ -455,7 +455,7 @@ export class HomeScene extends Phaser.Scene {
     this.card.removeAll(true);
     const r = HOME_LAYOUT.card;
     const p = this.cardPaper();
-    // Абзацы записки; «Заказов на день» — красным, как подпись в письме. Весь текст — по центру листа по вертикали.
+    // Абзацы записки; «Заказов на день» — красным. Весь блок начинается у верхнего края пергамента.
     const parts: { text: string; color: string; gap: number }[] =
       n > 0
         ? [
@@ -473,8 +473,7 @@ export class HomeScene extends Phaser.Scene {
         lineSpacing: 6,
       }),
     );
-    const blockH = texts.reduce((h, t, i) => h + t.height + parts[i].gap, 0);
-    let y = r.y + p.top + Math.max(0, (r.h - p.top - p.bottom - blockH) / 2);
+    let y = r.y + p.top;
     texts.forEach((t, i) => {
       y += parts[i].gap;
       t.setY(y);
@@ -985,7 +984,7 @@ export class HomeScene extends Phaser.Scene {
           targets: stamp,
           scaleX: base * F.waxSquash,
           scaleY: base / F.waxSquash,
-          duration: 35,
+          duration: F.waxSquashMs,
           yoyo: true,
           ease: "Quad.easeOut",
         });
@@ -1004,14 +1003,14 @@ export class HomeScene extends Phaser.Scene {
         targets: stamp,
         scaleX: base / F.imprintSquash,
         scaleY: base * F.imprintSquash,
-        duration: 30,
+        duration: F.imprintSquashMs,
         yoyo: true,
         ease: "Quad.easeOut",
       });
       this.tweens.add({
         targets: this.card,
         y: F.shakePx,
-        duration: 25,
+        duration: F.shakeMs,
         yoyo: true,
         ease: "Quad.easeOut",
       });

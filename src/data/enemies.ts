@@ -47,6 +47,7 @@ export const ENEMIES: Record<EnemyId, EnemyDef> = {
       { item: 'pitchfork', col: 0, row: 0 },
       { item: 'cow_pie', col: 1, row: 0 },
       { item: 'cow_pie', col: 1, row: 1 },
+      { item: 'cow_pie', col: 1, row: 2 },
     ],
   },
   strazhnik: {

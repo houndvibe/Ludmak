@@ -13,8 +13,8 @@ export const MUSIC_MASTER = 0.5;
 /** Громкость каждого звука отдельно. Все ключи — из src/config/audio.ts. */
 export const SOUND_VOLUME: Record<SoundKey, number> = {
   // Интерфейс — звучат постоянно, лучше потише
-  ui_click: 1,
-  ui_hover: 1,
+  ui_click: 0.5,
+  ui_hover: 0.5,
 
   // Дом
   contract_accept: 1,
