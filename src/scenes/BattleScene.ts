@@ -332,6 +332,12 @@ export class BattleScene extends Phaser.Scene {
         const r = last.r * 1.1;
         return { x: last.cont.x - r, y: last.cont.y - r, w: r * 2, h: r * 2 };
       }
+      if (id === 'parryDamage') {
+        // Сразу после первого парирования: отбитый удар всё равно ранит — подсвечена полоса здоровья героя (как в create).
+        const hp = L.heroPortrait;
+        const pad = 12;
+        return { x: hp.x + hp.w / 2 + 30 - pad, y: hp.y - 40 - 17 - pad, w: BAR_W + pad * 2, h: 34 + pad * 2 };
+      }
       return null;
     });
   }

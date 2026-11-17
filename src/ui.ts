@@ -229,32 +229,44 @@ export type ButtonTone = "confirm" | "refuse";
 
 /** Кнопка интерфейса с общей рамкой из главного меню. */
 /**
- * Золотое свечение рамки при наведении. postFX — отдельный полноэкранный проход рендера каждый кадр, даже при силе 0,
- * поэтому эффект висит на рамке только пока она светится: включили — добавили, погасло — сняли.
+ * Золотое свечение рамки при наведении. Раньше — шейдер postFX (полноэкранный проход рендера и создание буфера
+ * на каждое наведение — в браузере это давало заметную задержку). Теперь — ореол, нарисованный на холсте один раз
+ * (тень по силуэту рамки), отдельной девятисегментной плашкой под рамкой; наведение только меняет её прозрачность.
  */
 export function hoverGlow(
   scene: Phaser.Scene,
   target: Phaser.GameObjects.NineSlice,
 ): (on: boolean) => void {
   const G = FEEL.buttonGlow;
-  let glow: Phaser.FX.Glow | undefined;
+  const k = target.scaleX || 1;
+  const src = target.texture.key;
+  const blur = Math.max(2, Math.round(G.distance / k));
+  const pad = blur * 2;
+  const key = `${src}_glow_${blur}`;
+  if (!scene.textures.exists(key)) {
+    const img = target.texture.getSourceImage() as HTMLImageElement;
+    const tex = scene.textures.createCanvas(key, img.width + pad * 2, img.height + pad * 2)!;
+    const ctx = tex.getContext();
+    // Картинку рисуем за краем холста, а тень сдвигаем обратно — на холсте остаётся только тень.
+    const away = img.width + pad * 4;
+    ctx.shadowColor = Phaser.Display.Color.IntegerToColor(G.color).rgba;
+    ctx.shadowBlur = blur;
+    ctx.shadowOffsetX = away;
+    for (let i = 0; i < G.strength; i++) ctx.drawImage(img, pad - away, pad);
+    tex.refresh();
+  }
+  const slice = MENU_ART.button.slice + pad;
+  const glow = scene.add
+    .nineslice(target.x, target.y, key, undefined, target.width + pad * 2, target.height + pad * 2, slice, slice, slice, slice)
+    .setScale(k)
+    .setAlpha(0);
+  const parent = target.parentContainer;
+  if (parent) parent.addAt(glow, Math.max(0, parent.getIndex(target)));
+  else scene.children.moveBelow(glow as Phaser.GameObjects.GameObject, target as Phaser.GameObjects.GameObject);
   return (on: boolean) => {
-    if (!target.postFX || !target.active) return;
-    if (glow) scene.tweens.killTweensOf(glow);
-    if (!on && !glow) return;
-    if (on && !glow)
-      glow = target.postFX.addGlow(G.color, 0, 0, false, G.quality, G.distance);
-    const fx = glow!;
-    scene.tweens.add({
-      targets: fx,
-      outerStrength: on ? G.strength : 0,
-      duration: G.fadeMs,
-      onComplete: () => {
-        if (on || glow !== fx || !target.active) return;
-        target.postFX.remove(fx);
-        glow = undefined;
-      },
-    });
+    if (!glow.active) return;
+    scene.tweens.killTweensOf(glow);
+    scene.tweens.add({ targets: glow, alpha: on ? 1 : 0, duration: G.fadeMs });
   };
 }
 
@@ -694,6 +706,13 @@ const PARRY_PERK_TEXT: Record<ParryPerkId, string> = {
   axe: `${PARRY_PERK.axeCharges} парирований подряд — следующий удар топора ×${PARRY_PERK.axeMult}`,
   sickle: `за парирование лечит на ${PARRY_PERK.sickleHeal}`,
 };
+
+/** Перк парирования предмета словами (поле «Основное» в сумках); null — предмет не оружие и не щит. */
+export function parryPerkText(id: ItemId): string | null {
+  const perk = ITEMS[id].parryPerk;
+  if (!perk) return null;
+  return perk === "sword" ? "нет особого эффекта" : PARRY_PERK_TEXT[perk];
+}
 
 /**
  * Парирование для подсказки (магазин, значок типа): какую долю урона атаки гасит (%) и эффект. null — предмет не оружие

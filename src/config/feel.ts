@@ -243,7 +243,8 @@ export const FEEL = {
    */
   homeGlow: { color: "#e0b65a", blur: 22, passes: 3, fadeMs: 150, disabledShare: 0.5 },
   /** Кнопки (рамка художницы): золотое свечение по контуру при наведении — как у сундука и сумок. */
-  buttonGlow: { color: 0xe0b65a, strength: 3, distance: 10, quality: 0.1, fadeMs: 120 },
+  /** Свечение кнопок при наведении: цвет, strength — сколько раз наложить тень (яркость), distance — размытие (px экрана), fadeMs. */
+  buttonGlow: { color: 0xe0b65a, strength: 3, distance: 10, fadeMs: 120 },
 
   /**
    * Задвижка окошка в доме (кусок home_closed.webp): открывается — уезжает вверх за shutterOpenMs; закрывается — падает

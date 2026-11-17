@@ -87,6 +87,8 @@ export class HomeScene extends Phaser.Scene {
   private card!: Phaser.GameObjects.Container;
   private board!: Phaser.GameObjects.Container;
   private hotspots: Hotspot[] = [];
+  /** Где на экране вырезка двери с фона — рамка обучения совпадает с подсветкой при наведении. */
+  private doorCutout: Rect | null = null;
   private parryWarning: Phaser.GameObjects.Container | null = null;
 
   constructor() {
@@ -167,6 +169,7 @@ export class HomeScene extends Phaser.Scene {
     const L = HOME_LAYOUT;
     this.portrait = null;
     this.hotspots = [];
+    this.doorCutout = null;
     this.parryWarning = null;
     this.cardReady = false;
     this.queueShown = false;
@@ -363,7 +366,7 @@ export class HomeScene extends Phaser.Scene {
     if (id === "board") return L.board;
     if (id === "chest") return L.shop;
     if (id === "bags") return L.bags;
-    if (id === "door") return L.door;
+    if (id === "door") return this.doorCutout ?? L.door;
     return null;
   }
 
@@ -1201,6 +1204,8 @@ export class HomeScene extends Phaser.Scene {
         .setOrigin(0)
         .setScale(k)
         .setDepth(cut.depth ?? 5);
+      if (id === "door")
+        this.doorCutout = { x: cutout.x, y: cutout.y, w: cutout.displayWidth, h: cutout.displayHeight };
       // Свечение — заранее нарисованный ореол по силуэту (тень холста), лежит под вырезкой и проявляется при наведении.
       const g = this.glowTexture(homeCutoutKey(id));
       glow = this.add
